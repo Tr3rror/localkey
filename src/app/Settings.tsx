@@ -167,6 +167,7 @@ function UserEditDrawer({ user, currentUser, onClose, onSaved, colors }: {
     ]);
   }
 
+  
   return (
     <>
       <Pressable style={StyleSheet.absoluteFill} onPress={close} />
