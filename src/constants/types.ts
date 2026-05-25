@@ -7,6 +7,7 @@ export type Password = {
   email?: string;
   password: string;
   url?: string;
+  telefono?: string;
   notes?: string;
   isHidden?: boolean;   
   createdAt: number;

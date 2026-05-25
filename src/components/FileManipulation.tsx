@@ -24,13 +24,14 @@ const { StorageAccessFramework: SAF } = FileSystem;
 // ─── Column definitions ───────────────────────────────────────────────────────
 
 const COLUMNS: { key: keyof Password | 'isHidden'; header: string }[] = [
-  { key: 'label',    header: 'Site / App'   },
-  { key: 'username', header: 'Username'     },
-  { key: 'email',    header: 'Email'        },
-  { key: 'password', header: 'Password'     },
-  { key: 'url',      header: 'URL'          },
-  { key: 'notes',    header: 'Notes'        },
-  { key: 'isHidden', header: 'Hidden (0/1)' },
+  { key: 'label',     header: 'Site / App'   },
+  { key: 'username',  header: 'Username'     },
+  { key: 'email',     header: 'Email'        },
+  { key: 'password',  header: 'Password'     },
+  { key: 'url',       header: 'URL'          },
+  { key: 'telefono',  header: 'Phone'        },
+  { key: 'notes',     header: 'Notes'        },
+  { key: 'isHidden',  header: 'Hidden (0/1)' },
 ];
 
 // ─── Row conversion ───────────────────────────────────────────────────────────
@@ -72,6 +73,7 @@ function aoaToPasswordFields(
       email:    get(row, 'email', 'e-mail', 'mail') || undefined,
       password: get(row, 'password', 'pass', 'pwd', 'secret'),
       url:      get(row, 'url', 'website', 'link', 'uri') || undefined,
+      telefono: get(row, 'phone', 'telefono', 'tel', 'mobile', 'phone number') || undefined,
       notes:    get(row, 'notes', 'note', 'comment', 'remarks') || undefined,
       isHidden: get(row, 'hidden (0/1)', 'hidden', 'ishidden', 'is_hidden') === '1',
     }));

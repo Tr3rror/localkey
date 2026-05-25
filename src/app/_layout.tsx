@@ -15,6 +15,15 @@ import { useColorScheme } from 'react-native';
 import { initStorageBootstrap } from '@/components/Encrypt';
 initStorageBootstrap();
 
+// Initialize i18n and restore saved language preference
+import { getStoredLanguage } from '@/components/Encrypt';
+import '@/constants/i18n';
+import i18n from '@/constants/i18n';
+const savedLang = getStoredLanguage();
+if (savedLang && savedLang !== i18n.language) {
+  i18n.changeLanguage(savedLang);
+}
+
 import { AppThemeProvider } from '@/components/ThemeContext';
 
 export default function RootLayout() {

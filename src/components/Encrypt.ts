@@ -317,3 +317,105 @@ export function deletePasswordEntry(userId: string, passwordId: string): void {
   user.passwords = user.passwords.filter(p => p.id !== passwordId);
   saveAppData(data);
 }
+
+// ─── Biometric access helpers ─────────────────────────────────────────────────
+// Stored as a plain JSON array of userId strings under a dedicated key.
+// Uses the same MMKV instance (already unlocked), but lives outside AppStorage
+// so it survives storage re-keying cleanly.
+
+const BIOMETRIC_KEY = 'biometric_enabled_users';
+
+export function getBiometricEnabledUsers(): string[] {
+  try {
+    const raw = getStorage().getString(BIOMETRIC_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as string[];
+  } catch {
+    return [];
+  }
+}
+
+export function setBiometricEnabledUsers(userIds: string[]): void {
+  getStorage().set(BIOMETRIC_KEY, JSON.stringify(userIds));
+}
+
+export function isBiometricEnabledForUser(userId: string): boolean {
+  return getBiometricEnabledUsers().includes(userId);
+}
+
+export function toggleBiometricForUser(userId: string, enabled: boolean): void {
+  const current = getBiometricEnabledUsers();
+  const updated = enabled
+    ? [...new Set([...current, userId])]
+    : current.filter(id => id !== userId);
+  setBiometricEnabledUsers(updated);
+}
+
+// ─── Biometric credential vault ───────────────────────────────────────────────
+// A SEPARATE unencrypted MMKV instance used purely to cache credentials for
+// biometric login. The device OS (Face ID / fingerprint) guards physical access;
+// this storage is only readable on the same device.
+//
+// We store the raw password (needed to re-derive the masterAdmin encryption key)
+// in this vault when the user enables biometric access for an account.
+
+let _bioStorage: ReturnType<typeof createMMKV> | null = null;
+
+function getBioStorage(): ReturnType<typeof createMMKV> {
+  if (!_bioStorage) {
+    _bioStorage = createMMKV({ id: 'localkey-biometric-credentials' });
+  }
+  return _bioStorage;
+}
+
+const BIO_CRED_PREFIX = 'bio_cred::';
+
+export function saveBiometricCredential(userId: string, password: string): void {
+  getBioStorage().set(`${BIO_CRED_PREFIX}${userId}`, password);
+}
+
+export function getBiometricCredential(userId: string): string | undefined {
+  const val = getBioStorage().getString(`${BIO_CRED_PREFIX}${userId}`);
+  // Empty string sentinel means "credential was cleared"
+  if (val === undefined || val === '\x00') return undefined;
+  return val;
+}
+
+export function deleteBiometricCredential(userId: string): void {
+  // MMKV v4 doesn't expose delete/removeItem in this build — overwrite with sentinel
+  getBioStorage().set(`${BIO_CRED_PREFIX}${userId}`, '\x00');
+}
+
+// ─── Account icon storage ─────────────────────────────────────────────────────
+// Stores per-user icon: either an emoji string or a local image URI (prefixed with 'file:' or 'content:')
+
+const ICON_PREFIX = 'account_icon::';
+
+export function getAccountIcon(userId: string): string {
+  try {
+    return getStorage().getString(`${ICON_PREFIX}${userId}`) ?? '👤';
+  } catch {
+    return '👤';
+  }
+}
+
+export function setAccountIcon(userId: string, icon: string): void {
+  getStorage().set(`${ICON_PREFIX}${userId}`, icon);
+}
+
+// ─── Language storage ─────────────────────────────────────────────────────────
+
+const LANG_KEY = 'app_language';
+
+export function getStoredLanguage(): string {
+  try {
+    // Use the bio storage (unencrypted) so language is accessible before vault unlock
+    return getBioStorage().getString(LANG_KEY) ?? 'it';
+  } catch {
+    return 'it';
+  }
+}
+
+export function setStoredLanguage(lang: string): void {
+  getBioStorage().set(LANG_KEY, lang);
+}
