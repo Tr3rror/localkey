@@ -8,16 +8,11 @@ import React from 'react';
 import { useColorScheme } from 'react-native';
 
 // ─── CRITICAL: initialize storage synchronously at module load time ───────────
-// If we put this in useEffect, it runs AFTER the first render, which means
-// index.tsx's useEffect may fire before storage is ready → getAllUsers()
-// throws → always redirects to CreateUser.
-// Calling it here at module scope runs it immediately when the JS bundle loads.
-import { initStorageBootstrap } from '@/components/Encrypt';
+import { getStoredLanguage, initStorageBootstrap } from '@/components/Encrypt';
 initStorageBootstrap();
 
-// Initialize i18n and restore saved language preference
-import { getStoredLanguage } from '@/components/Encrypt';
-import '@/constants/i18n';
+// ─── i18n: init before first render, restore saved language ──────────────────
+import '@/constants/i18n'; // side-effect: runs i18n.init()
 import i18n from '@/constants/i18n';
 const savedLang = getStoredLanguage();
 if (savedLang && savedLang !== i18n.language) {

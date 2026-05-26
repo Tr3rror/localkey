@@ -1,21 +1,25 @@
 {
   "expo": {
-    "name": "localkey",
+    "name": "LocalKey",
     "slug": "localkey",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/expo-icons/icon.png",
     "scheme": "localkey",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "dark",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo-icons/icon.png",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "LocalKey uses Face ID to unlock your vault without typing your password.",
+        "NSPhotoLibraryUsageDescription": "LocalKey uses your photo library to let you set a profile picture."
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/expo-icons/adaptive-icon.png",
-        "backgroundImage": "./assets/expo-icons/adaptive-icon.png",
-        "monochromeImage": "./assets/expo-icons/adaptive-icon.png"
+        "backgroundColor": "#102030",
+        "monochromeImage": "./assets/expo-icons/adaptive-icon-mono.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.tr3rr0r.localkey"
@@ -29,16 +33,27 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
-          "android": {
-            "image": "./assets/expo-icons/splash-icon.png",
-            "imageWidth": 76
-          }
+          "backgroundColor": "#000000",
+          "image": "./assets/expo-icons/splash-icon.png",
+          "imageWidth": 300,
+          "resizeMode": "contain"
         }
       ],
       "expo-sharing",
       "expo-font",
-      "expo-image"
+      "expo-image",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "LocalKey uses your photo library to let you set a profile picture."
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "LocalKey uses Face ID to unlock your vault."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

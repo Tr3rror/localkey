@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
@@ -15,6 +16,7 @@ import {
 
 import {
   deriveKey,
+  getAccountIcon,
   getAllUsers,
   getBiometricCredential,
   initStorage,
@@ -32,6 +34,11 @@ function roleLabel(role: User['role']): string {
   return 'User';
 }
 
+function isImageUri(s: string): boolean {
+  return s.startsWith('/') || s.startsWith('file:') || s.startsWith('content:')
+      || s.startsWith('ph://') || s.startsWith('asset-library:') || s.startsWith('http');
+}
+
 // ─── Animated user card ───────────────────────────────────────────────────────
 function UserCard({
   user, index, bioAvail, bioType, colors,
@@ -41,6 +48,10 @@ function UserCard({
   onPress: () => void; onBioPress: () => void;
 }) {
   const anim = useRef(new Animated.Value(0)).current;
+  // Read icon once on mount — no need for live refresh on the selection screen
+  const icon = getAccountIcon(user.id);
+  const showImage = isImageUri(icon);
+  const showEmoji = !showImage && icon && icon !== '👤';
 
   useEffect(() => {
     Animated.spring(anim, {
@@ -79,11 +90,24 @@ function UserCard({
         onPress={onPress}
         activeOpacity={0.75}
       >
-        {/* Avatar */}
-        <View style={[st.avatarWrap, { backgroundColor: roleColor + '18', borderColor: roleColor + '55' }]}>
-          <Text style={[st.avatarLetter, { color: roleColor }]}>
-            {user.username.charAt(0).toUpperCase()}
-          </Text>
+        {/* Avatar — image, emoji, or initial letter */}
+        <View style={[st.avatarWrap, {
+          backgroundColor: showImage ? 'transparent' : roleColor + '18',
+          borderColor: showImage ? 'transparent' : roleColor + '55',
+        }]}>
+          {showImage ? (
+            <Image
+              source={{ uri: icon }}
+              style={st.avatarImage}
+              contentFit="cover"
+            />
+          ) : showEmoji ? (
+            <Text style={st.avatarEmoji}>{icon}</Text>
+          ) : (
+            <Text style={[st.avatarLetter, { color: roleColor }]}>
+              {user.username.charAt(0).toUpperCase()}
+            </Text>
+          )}
           {isMaster && (
             <View style={[st.crownBadge, { backgroundColor: colors.accent }]}>
               <Text style={st.crownTxt}>★</Text>
@@ -250,7 +274,9 @@ const st = StyleSheet.create({
   list:        { paddingHorizontal: 20, paddingBottom: 20 },
 
   card:        { flexDirection: 'row', alignItems: 'center', borderRadius: 18, padding: 16, gap: 14 },
-  avatarWrap:  { width: 52, height: 52, borderRadius: 16, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center' },
+  avatarWrap:  { width: 52, height: 52, borderRadius: 16, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
+  avatarImage:  { width: 52, height: 52, borderRadius: 16 },
+  avatarEmoji:  { fontSize: 26 },
   avatarLetter:{ fontSize: 22, fontWeight: '700' },
   crownBadge:  { position: 'absolute', bottom: -4, right: -4, width: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },
   crownTxt:    { fontSize: 9, color: '#000' },
