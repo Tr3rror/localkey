@@ -7,7 +7,6 @@ export type Password = {
   email?: string;
   password: string;
   url?: string;
-  telefono?: string;
   notes?: string;
   isHidden?: boolean;   
   createdAt: number;
@@ -55,5 +54,6 @@ export const PRESET_THEMES: ThemeSlot[] = [
   { name: 'Midnight',  colors: { accent: '#7EB8C8', background: '#070B14', card: '#0F1623', text: '#D6E8F0', subtext: '#3A5060' } },
   { name: 'Crimson',   colors: { accent: '#C84F4F', background: '#0E0A0A', card: '#1A1010', text: '#F0E8E8', subtext: '#503A3A' } },
   { name: 'Forest',    colors: { accent: '#6BAF7A', background: '#090E09', card: '#111811', text: '#E4F0E6', subtext: '#3A503D' } },
-  { name: 'Ash',       colors: { accent: '#A0A0A0', background: '#0A0A0A', card: '#151515', text: '#E8E8E8', subtext: '#444444' } },
+  { name: 'Ash',       colors: { accent: '#B8B8B8', background: '#111111', card: '#1E1E1E', text: '#F0F0F0', subtext: '#606060' } },
+  { name: 'Aurora',    colors: { accent: '#7F5AF0', background: '#0D0B14', card: '#16131F', text: '#E8E4F8', subtext: '#4A4260' } },
 ];

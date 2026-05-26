@@ -24,14 +24,13 @@ const { StorageAccessFramework: SAF } = FileSystem;
 // ─── Column definitions ───────────────────────────────────────────────────────
 
 const COLUMNS: { key: keyof Password | 'isHidden'; header: string }[] = [
-  { key: 'label',     header: 'Site / App'   },
-  { key: 'username',  header: 'Username'     },
-  { key: 'email',     header: 'Email'        },
-  { key: 'password',  header: 'Password'     },
-  { key: 'url',       header: 'URL'          },
-  { key: 'telefono',  header: 'Phone'        },
-  { key: 'notes',     header: 'Notes'        },
-  { key: 'isHidden',  header: 'Hidden (0/1)' },
+  { key: 'label',    header: 'Site / App'   },
+  { key: 'username', header: 'Username'     },
+  { key: 'email',    header: 'Email'        },
+  { key: 'password', header: 'Password'     },
+  { key: 'url',      header: 'URL'          },
+  { key: 'notes',    header: 'Notes'        },
+  { key: 'isHidden', header: 'Hidden (0/1)' },
 ];
 
 // ─── Row conversion ───────────────────────────────────────────────────────────
@@ -73,7 +72,6 @@ function aoaToPasswordFields(
       email:    get(row, 'email', 'e-mail', 'mail') || undefined,
       password: get(row, 'password', 'pass', 'pwd', 'secret'),
       url:      get(row, 'url', 'website', 'link', 'uri') || undefined,
-      telefono: get(row, 'phone', 'telefono', 'tel', 'mobile', 'phone number') || undefined,
       notes:    get(row, 'notes', 'note', 'comment', 'remarks') || undefined,
       isHidden: get(row, 'hidden (0/1)', 'hidden', 'ishidden', 'is_hidden') === '1',
     }));
@@ -204,9 +202,26 @@ export async function importCsv(): Promise<ImportResult | null> {
 
   if (picked.canceled) return null;
 
-  const text = await FileSystem.readAsStringAsync(picked.assets[0].uri, {
-    encoding: FileSystem.EncodingType.UTF8,
-  });
+  const uri = picked.assets[0].uri;
+
+  // On physical Android the content:// URI can fail with UTF8 read;
+  // read as base64 and let XLSX decode it (avoids needing Buffer/Node APIs).
+  let text: string;
+  try {
+    if (Platform.OS === 'android') {
+      const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+      // XLSX can decode base64 directly as a binary string
+      const wb2  = XLSX.read(b64, { type: 'base64' });
+      const ws2  = wb2.Sheets[wb2.SheetNames[0]];
+      const aoa2 = XLSX.utils.sheet_to_json<unknown[]>(ws2, { header: 1, defval: '' });
+      return buildResult(aoa2);
+    } else {
+      text = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.UTF8 });
+    }
+  } catch {
+    // fallback to direct UTF8
+    text = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.UTF8 });
+  }
 
   const wb  = XLSX.read(text, { type: 'string' });
   const ws  = wb.Sheets[wb.SheetNames[0]];
@@ -219,12 +234,9 @@ export async function importCsv(): Promise<ImportResult | null> {
 
 export async function importExcel(): Promise<ImportResult | null> {
   const picked = await DocumentPicker.getDocumentAsync({
-    type: [
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'application/vnd.ms-excel',
-      'org.openxmlformats.spreadsheetml.sheet',
-      'application/octet-stream',
-    ],
+    // Use '*/*' for physical Android — MIME type filtering is unreliable
+    // on many Android OEM file pickers; we validate the content instead.
+    type: '*/*',
     copyToCacheDirectory: true,
   });
 
