@@ -1,7 +1,9 @@
+import '@/constants/i18n';
 import { Image } from 'expo-image';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Alert,
   Animated,
@@ -46,28 +48,41 @@ function isImageUri(icon: string): boolean {
 
 // ─── Guard wrapper ─────────────────────────────────────────────────────────────
 export default function Login() {
-  const { userId } = useLocalSearchParams<{ userId: string }>();
+  const { userId, fromIndex } = useLocalSearchParams<{ userId: string; fromIndex?: string }>();
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const router = useRouter();
   const user = getUserById(userId);
 
   if (!user) {
     return (
       <View style={[s.centered, { backgroundColor: colors.background }]}>
-        <Text style={[s.errorText, { color: colors.subtext }]}>Account not found.</Text>
+        <Text style={[s.errorText, { color: colors.subtext }]}>{t('accountNotFound')}</Text>
         <TouchableOpacity onPress={() => router.replace('/')} style={s.backLink}>
-          <Text style={[s.backLinkText, { color: colors.accent }]}>← Go back</Text>
+          <Text style={[s.backLinkText, { color: colors.accent }]}>← {t('goBack')}</Text>
         </TouchableOpacity>
       </View>
     );
   }
-  return <LoginInner user={user} />;
+  return <LoginInner user={user} fromIndex={fromIndex === '1'} />;
 }
 
 // ─── Inner ─────────────────────────────────────────────────────────────────────
-function LoginInner({ user }: { user: User }) {
+function LoginInner({ user, fromIndex }: { user: User; fromIndex: boolean }) {
   const router = useRouter();
   const { colors, loadUserTheme } = useTheme();
+  const { t } = useTranslation();
+
+  // Back navigation: if we arrived via auto-redirect from index (single account),
+  // go back to index with noAutoRedirect=1 so it doesn't loop.
+  // If we arrived normally (user tapped the card), just router.back().
+  function handleBack() {
+    if (fromIndex) {
+      router.replace({ pathname: '/', params: { noAutoRedirect: '1' } });
+    } else {
+      router.back();
+    }
+  }
 
   const [password,     setPassword]     = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -145,13 +160,13 @@ function LoginInner({ user }: { user: User }) {
           initStorage(deriveKey(pwd));
           if (!verifyPassword(pwd, user.passwordHash)) {
             setLoading(false); shake();
-            Alert.alert('Wrong password', 'Please try again.');
+            Alert.alert(t('wrongPassword'), t('wrongPasswordMsg'));
             return;
           }
         } else {
           if (!verifyPassword(pwd, user.passwordHash)) {
             setLoading(false); shake();
-            Alert.alert('Wrong password', 'Please try again.');
+            Alert.alert(t('wrongPassword'), t('wrongPasswordMsg'));
             return;
           }
         }
@@ -160,7 +175,7 @@ function LoginInner({ user }: { user: User }) {
         router.replace({ pathname: '/Home', params: { userId: user.id } });
       } catch {
         setLoading(false);
-        Alert.alert('Error', 'Could not open the vault. Please try again.');
+        Alert.alert('Error', t('couldNotOpen'));
       }
     }, 50);
   }
@@ -168,24 +183,24 @@ function LoginInner({ user }: { user: User }) {
   async function triggerBiometricAuth(storedCred?: string) {
     const cred = storedCred ?? getBiometricCredential(user.id);
     if (cred === undefined) {
-      Alert.alert('Not set up', 'Log in with your password first to register biometrics.');
+      Alert.alert('', t('biometricNotSetUp'));
       return;
     }
     try {
       const msg =
-        bioType === 'face'        ? 'Use Face ID to unlock'        :
-        bioType === 'fingerprint' ? 'Use fingerprint to unlock'    :
-                                    'Authenticate to unlock';
+        bioType === 'face'        ? t('useFaceId')        :
+        bioType === 'fingerprint' ? t('useFingerprint')   :
+                                    t('useAuth');
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: msg, fallbackLabel: 'Use password',
-        cancelLabel: 'Cancel', disableDeviceFallback: false,
+        promptMessage: msg, fallbackLabel: t('unlockVault'),
+        cancelLabel: t('cancel'), disableDeviceFallback: false,
       });
       if (result.success) performLogin(cred);
     } catch {}
   }
 
   const bioIcon  = bioType === 'face' ? '🪪' : bioType === 'fingerprint' ? '☝' : '🔓';
-  const bioLabel = bioType === 'face' ? 'Face ID' : bioType === 'fingerprint' ? 'Fingerprint' : 'Biometrics';
+  const bioLabel = bioType === 'face' ? t('faceIdLabel') : bioType === 'fingerprint' ? t('fingerprintLabel') : t('biometricsLabel');
   const showBio  = bioAvailable && bioEnabled;
   const showingImage = isImageUri(accountIcon);
 
@@ -200,7 +215,7 @@ function LoginInner({ user }: { user: User }) {
         showsVerticalScrollIndicator={false}
       >
         {/* Back */}
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
+        <TouchableOpacity onPress={handleBack} style={s.backBtn}>
           <View style={[s.backBtnInner, { backgroundColor: colors.card }]}>
             <Text style={[s.backBtnTxt, { color: colors.text }]}>←</Text>
           </View>
@@ -273,7 +288,7 @@ function LoginInner({ user }: { user: User }) {
             <View style={[s.noPasswordCard, { backgroundColor: colors.card }]}>
               <Text style={s.noPasswordIcon}>🔓</Text>
               <Text style={[s.noPasswordTxt, { color: colors.subtext }]}>
-                No password set — tap to enter
+                {t('noPasswordSet')}
               </Text>
             </View>
           )}
@@ -286,7 +301,7 @@ function LoginInner({ user }: { user: User }) {
             disabled={loading}
           >
             <Text style={[s.loginBtnTxt, { color: colors.background }]}>
-              {loading ? 'Unlocking…' : 'Unlock vault'}
+              {loading ? t('unlocking') : t('unlockVault')}
             </Text>
           </TouchableOpacity>
 

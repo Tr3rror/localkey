@@ -1,5 +1,7 @@
+import '@/constants/i18n';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Alert,
   Animated,
@@ -21,6 +23,7 @@ import { UserRole } from '@/constants/types';
 export default function CreateUser() {
   const router = useRouter();
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const isFirstUser = !hasMasterAdmin();
 
   const [username,        setUsername]        = useState('');
@@ -43,26 +46,26 @@ export default function CreateUser() {
     role === 'admin'       ? '#7EB8C8'     : colors.subtext;
 
   const roleName =
-    role === 'masterAdmin' ? 'Master Admin' :
-    role === 'admin'       ? 'Admin'        : 'User';
+    role === 'masterAdmin' ? t('masterAdmin') :
+    role === 'admin'       ? t('adminRole')   : t('userRole');
 
   function validate(): string | null {
-    if (!username.trim()) return 'Username cannot be empty.';
+    if (!username.trim()) return t('usernameEmpty');
     const dup = getAllUsers().some(u => u.username.toLowerCase() === username.trim().toLowerCase());
-    if (dup) return 'This username is already taken.';
-    if (password && password !== confirmPassword) return 'Passwords do not match.';
+    if (dup) return t('usernameTaken');
+    if (password && password !== confirmPassword) return t('passwordsMismatch');
     return null;
   }
 
   function handleCreate() {
     const error = validate();
-    if (error) { Alert.alert('Cannot create account', error); return; }
+    if (error) { Alert.alert(t('cannotCreate'), error); return; }
     const newUser = createUser(username.trim(), password.trim(), role);
     saveUser(newUser);
     Alert.alert(
-      'Account created',
-      `${roleName} "${newUser.username}" is ready.`,
-      [{ text: 'Continue', onPress: () => router.replace('/') }],
+      t('accountCreated'),
+      t('accountReady', { role: roleName, name: newUser.username }),
+      [{ text: t('continueBtn'), onPress: () => router.replace('/') }],
     );
   }
 
@@ -87,12 +90,10 @@ export default function CreateUser() {
           {/* Header */}
           <View style={st.header}>
             <Text style={[st.title, { color: colors.text }]}>
-              {isFirstUser ? 'Welcome to LocalKey' : 'New account'}
+              {isFirstUser ? t('welcomeTitle') : t('newAccount')}
             </Text>
             <Text style={[st.subtitle, { color: colors.subtext }]}>
-              {isFirstUser
-                ? 'Create your master account to get started.'
-                : 'Fill in the details below.'}
+              {isFirstUser ? t('createMasterSub') : t('fillInDetails')}
             </Text>
           </View>
 
@@ -104,7 +105,7 @@ export default function CreateUser() {
 
           {/* Username */}
           <View style={st.fieldGroup}>
-            <Text style={[st.fieldLabel, { color: colors.subtext }]}>Username</Text>
+            <Text style={[st.fieldLabel, { color: colors.subtext }]}>{t('fieldUsername').toUpperCase()}</Text>
             <TextInput
               style={[st.input, { backgroundColor: colors.card, color: colors.text }]}
               placeholder="e.g. emanuele"
@@ -119,13 +120,13 @@ export default function CreateUser() {
           {/* Password */}
           <View style={st.fieldGroup}>
             <Text style={[st.fieldLabel, { color: colors.subtext }]}>
-              Password{'  '}
-              <Text style={{ fontWeight: '400', fontSize: 12 }}>(optional)</Text>
+              {t('fieldPassword').toUpperCase()}{'  '}
+              <Text style={{ fontWeight: '400', fontSize: 12 }}>{t('passwordOptional')}</Text>
             </Text>
             <View style={[st.inputRow, { backgroundColor: colors.card }]}>
               <TextInput
                 style={[st.inputFlex, { color: colors.text }]}
-                placeholder="Leave empty for no password"
+                placeholder={t('leaveEmptyNoPass')}
                 placeholderTextColor={colors.subtext}
                 value={password}
                 onChangeText={setPassword}
@@ -145,13 +146,13 @@ export default function CreateUser() {
           {/* Confirm password */}
           {password.length > 0 && (
             <View style={st.fieldGroup}>
-              <Text style={[st.fieldLabel, { color: colors.subtext }]}>Confirm password</Text>
+              <Text style={[st.fieldLabel, { color: colors.subtext }]}>{t('confirmPasswordField').toUpperCase()}</Text>
               <TextInput
                 style={[st.input, { backgroundColor: colors.card, color: colors.text,
                   borderColor: confirmPassword && confirmPassword !== password ? '#C84F4F55' : colors.card,
                   borderWidth: 1,
                 }]}
-                placeholder="Repeat your password"
+                placeholder={t('repeatPassword')}
                 placeholderTextColor={colors.subtext}
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
@@ -160,7 +161,7 @@ export default function CreateUser() {
                 autoCorrect={false}
               />
               {confirmPassword.length > 0 && confirmPassword !== password && (
-                <Text style={{ color: '#C84F4F', fontSize: 12, paddingLeft: 4 }}>Passwords don't match</Text>
+                <Text style={{ color: '#C84F4F', fontSize: 12, paddingLeft: 4 }}>{t('passwordsNoMatch')}</Text>
               )}
             </View>
           )}
@@ -169,10 +170,8 @@ export default function CreateUser() {
           {!isFirstUser && (
             <View style={[st.toggleRow, { backgroundColor: colors.card }]}>
               <View style={{ flex: 1 }}>
-                <Text style={[st.toggleLabel, { color: colors.text }]}>Admin privileges</Text>
-                <Text style={[st.toggleSub, { color: colors.subtext }]}>
-                  Can manage users and all passwords
-                </Text>
+                <Text style={[st.toggleLabel, { color: colors.text }]}>{t('adminPrivileges')}</Text>
+                <Text style={[st.toggleSub, { color: colors.subtext }]}>{t('adminPrivilegesSub')}</Text>
               </View>
               <Switch
                 value={isAdmin}
@@ -187,9 +186,7 @@ export default function CreateUser() {
           {isFirstUser && (
             <View style={[st.infoBox, { backgroundColor: colors.accent + '11', borderColor: colors.accent + '44' }]}>
               <Text style={st.infoIcon}>🔑</Text>
-              <Text style={[st.infoText, { color: colors.accent }]}>
-                The Master Admin is unique and has full control over all accounts and settings.
-              </Text>
+              <Text style={[st.infoText, { color: colors.accent }]}>{t('masterAdminInfo')}</Text>
             </View>
           )}
 
@@ -200,7 +197,7 @@ export default function CreateUser() {
             activeOpacity={0.82}
           >
             <Text style={[st.submitTxt, { color: colors.background }]}>
-              {isFirstUser ? 'Set up LocalKey' : 'Create account'}
+              {isFirstUser ? t('setupLocalKey') : t('createAccount')}
             </Text>
           </TouchableOpacity>
 

@@ -28,12 +28,8 @@ const ALPHABET             = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('');
 const LETTER_ITEM_H        = 22;
 
 type SearchField = 'all' | 'label' | 'username' | 'email' | 'password' | 'url' | 'notes';
-const SEARCH_FIELDS: { key: SearchField; label: string }[] = [
-  { key: 'all', label: 'All' }, { key: 'label', label: 'Site' },
-  { key: 'username', label: 'User' }, { key: 'email', label: 'Email' },
-  { key: 'password', label: 'Pass' }, { key: 'url', label: 'URL' },
-  { key: 'notes', label: 'Notes' },
-];
+// Labels are built at render time via t() — see useSearchFields() below
+const SEARCH_FIELD_KEYS: SearchField[] = ['all','label','username','email','password','url','notes'];
 
 // ─── Keyboard height hook ─────────────────────────────────────────────────────
 // Tracks the keyboard height as an Animated.Value so the sheet can smoothly
@@ -76,22 +72,23 @@ function emptyEntry(): Omit<Password, 'id' | 'createdAt' | 'updatedAt'> {
   return { label: '', username: '', email: '', password: '', url: '', telefono: '', notes: '', isHidden: false };
 }
 
-function copyField(value: string, label: string) {
+function copyField(value: string, label: string, copiedMsg: string) {
   if (!value) return;
   Clipboard.setString(value);
-  Alert.alert('Copied', `${label} copied to clipboard.`, [{ text: 'OK' }]);
+  Alert.alert(copiedMsg, `${label}`);
 }
 
 // ─── DrawerField ──────────────────────────────────────────────────────────────
 function DrawerField({
   label, value, secureDefault = false, editable = false,
   onChangeText, placeholder, multiline = false,
-  bgColor, textColor, subtextColor, accentColor,
+  bgColor, textColor, subtextColor, accentColor, copiedMsg,
 }: {
   label: string; value: string; secureDefault?: boolean;
   editable?: boolean; onChangeText?: (t: string) => void;
   placeholder?: string; multiline?: boolean;
   bgColor: string; textColor: string; subtextColor: string; accentColor: string;
+  copiedMsg?: string;
 }) {
   const [hidden, setHidden] = useState(secureDefault);
   useEffect(() => { setHidden(secureDefault); }, [editable]);
@@ -128,7 +125,7 @@ function DrawerField({
           )}
           {!editable && !!value && (
             <TouchableOpacity style={[df.iconBtn, { backgroundColor: accentColor + '22' }]}
-              onPress={() => copyField(value, label)}>
+              onPress={() => copyField(value, label, copiedMsg ?? '')}>
               <Text style={[df.iconTxt, { color: accentColor }]}>⎘</Text>
             </TouchableOpacity>
           )}
@@ -225,9 +222,21 @@ function PasswordRow({ item, onPress, colors }: {
 export default function Home() {
   const router = useRouter();
   const { colors } = useTheme();
-  const { t: tr } = useTranslation();
+  const { t } = useTranslation();
   const { userId, hiddenMode } = useLocalSearchParams<{ userId: string; hiddenMode?: string }>();
   const isHiddenMode = hiddenMode === '1';
+
+  // Build search field labels from translations — must be inside the component
+  // so they update when the language changes.
+  const SEARCH_FIELDS = [
+    { key: 'all'      as SearchField, label: t('searchAll')   },
+    { key: 'label'    as SearchField, label: t('searchSite')  },
+    { key: 'username' as SearchField, label: t('searchUser')  },
+    { key: 'email'    as SearchField, label: t('searchEmail') },
+    { key: 'password' as SearchField, label: t('searchPass')  },
+    { key: 'url'      as SearchField, label: t('searchUrl')   },
+    { key: 'notes'    as SearchField, label: t('searchNotes') },
+  ];
 
   const [passwords,    setPasswords]    = useState<Password[]>([]);
   const [searchMode,   setSearchMode]   = useState(false);
@@ -315,16 +324,16 @@ export default function Home() {
     openDrawer();
   }
   function handleSave() {
-    if (!form.label.trim()) { Alert.alert('Required', 'Please enter a site or app name.'); return; }
+    if (!form.label.trim()) { Alert.alert(t('requiredField'), t('enterSiteName')); return; }
     if (drawerMode === 'add') addPasswordToUser(userId, form);
     else if (drawerMode === 'edit' && selected) updatePasswordEntry(userId, selected.id, form);
     reload(); closeDrawer();
   }
   function handleDelete() {
     if (!selected) return;
-    Alert.alert('Delete entry', `Delete "${selected.label}"? This cannot be undone.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => { deletePasswordEntry(userId, selected.id); reload(); closeDrawer(); } },
+    Alert.alert(t('deleteEntry'), t('deleteEntryMsg', { name: selected.label }), [
+      { text: t('cancel'), style: 'cancel' },
+      { text: t('delete'), style: 'destructive', onPress: () => { deletePasswordEntry(userId, selected.id); reload(); closeDrawer(); } },
     ]);
   }
   function handleBack() {
@@ -341,7 +350,7 @@ export default function Home() {
       {/* Hidden mode banner */}
       {isHiddenMode && (
         <View style={[s.hiddenBanner, { backgroundColor: colors.accent + '22', borderColor: colors.accent + '33' }]}>
-          <Text style={[s.hiddenBannerTxt, { color: colors.accent }]}>{'👁  Hidden vault — private entries only'}</Text>
+          <Text style={[s.hiddenBannerTxt, { color: colors.accent }]}>{t('hiddenVaultBanner')}</Text>
         </View>
       )}
 
@@ -369,7 +378,7 @@ export default function Home() {
             <TouchableOpacity style={[s.searchBar, { backgroundColor: colors.card }]} onPress={enterSearch}>
               <Text style={[s.searchIcon, { color: colors.subtext }]}>🔍</Text>
               <Text style={[s.searchPlaceholder, { color: colors.subtext }]}>
-                {passwords.length > 0 ? `Search ${passwords.length} entries…` : 'Search passwords…'}
+                {passwords.length > 0 ? t('searchPlaceholderCount', { count: passwords.length }) : t('searchPlaceholder')}
               </Text>
             </TouchableOpacity>
           )}
@@ -425,12 +434,12 @@ export default function Home() {
               <Text style={s.emptyIcon}>{passwords.length === 0 ? '🔐' : '🔍'}</Text>
               <Text style={[s.emptyTitle, { color: colors.text }]}>
                 {passwords.length === 0
-                  ? (isHiddenMode ? 'Hidden vault is empty' : 'No passwords yet')
-                  : 'No results'}
+                  ? (isHiddenMode ? t('hiddenVaultEmpty') : t('noPasswordsYet'))
+                  : t('noResults')}
               </Text>
               {passwords.length === 0 && !isHiddenMode && (
                 <Text style={[s.emptySub, { color: colors.subtext }]}>
-                  Tap the + button to add your first entry.
+                  {t('tapPlusHint')}
                 </Text>
               )}
             </View>
@@ -487,9 +496,9 @@ export default function Home() {
                   </Text>
                 </View>
                 <Text style={[s.sheetTitle, { color: colors.text }]}>
-                  {drawerMode === 'add' ? 'New entry'
-                    : drawerMode === 'edit' ? 'Edit entry'
-                    : form.label || 'Entry'}
+                  {drawerMode === 'add'  ? t('newEntry')
+                    : drawerMode === 'edit' ? t('editEntry')
+                    : form.label || t('entry')}
                 </Text>
               </View>
               <View style={s.sheetHeadBtns}>
@@ -515,44 +524,51 @@ export default function Home() {
               bounces={false}
               showsVerticalScrollIndicator={false}
             >
-                <DrawerField label={'Site / App'} value={form.label}
+                <DrawerField label={t('fieldSiteApp')} value={form.label}
                   editable={drawerMode !== 'view'}
                   onChangeText={v => setForm(f => ({ ...f, label: v }))}
-                  placeholder={'e.g. Gmail'}
-                  bgColor={colors.background} textColor={colors.text} subtextColor={colors.subtext} accentColor={colors.accent} />
-                <DrawerField label={'Username'} value={form.username}
+                  placeholder={t('fieldSiteAppHint')}
+                  bgColor={colors.background} textColor={colors.text} subtextColor={colors.subtext} accentColor={colors.accent}
+                  copiedMsg={t('copied')} />
+                <DrawerField label={t('fieldUsername')} value={form.username}
                   editable={drawerMode !== 'view'}
                   onChangeText={v => setForm(f => ({ ...f, username: v }))}
-                  bgColor={colors.background} textColor={colors.text} subtextColor={colors.subtext} accentColor={colors.accent} />
-                <DrawerField label={'Email'} value={form.email ?? ''}
+                  bgColor={colors.background} textColor={colors.text} subtextColor={colors.subtext} accentColor={colors.accent}
+                  copiedMsg={t('copied')} />
+                <DrawerField label={t('fieldEmail')} value={form.email ?? ''}
                   editable={drawerMode !== 'view'}
                   onChangeText={v => setForm(f => ({ ...f, email: v }))}
-                  bgColor={colors.background} textColor={colors.text} subtextColor={colors.subtext} accentColor={colors.accent} />
-                <DrawerField label={'Password'} value={form.password}
+                  bgColor={colors.background} textColor={colors.text} subtextColor={colors.subtext} accentColor={colors.accent}
+                  copiedMsg={t('copied')} />
+                <DrawerField label={t('fieldPassword')} value={form.password}
                   secureDefault editable={drawerMode !== 'view'}
                   onChangeText={v => setForm(f => ({ ...f, password: v }))}
-                  bgColor={colors.background} textColor={colors.text} subtextColor={colors.subtext} accentColor={colors.accent} />
-                <DrawerField label={'URL'} value={form.url ?? ''}
+                  bgColor={colors.background} textColor={colors.text} subtextColor={colors.subtext} accentColor={colors.accent}
+                  copiedMsg={t('copied')} />
+                <DrawerField label={t('fieldUrl')} value={form.url ?? ''}
                   editable={drawerMode !== 'view'}
                   onChangeText={v => setForm(f => ({ ...f, url: v }))}
                   placeholder="https://"
-                  bgColor={colors.background} textColor={colors.text} subtextColor={colors.subtext} accentColor={colors.accent} />
-                <DrawerField label={'Phone'} value={form.telefono ?? ''}
+                  bgColor={colors.background} textColor={colors.text} subtextColor={colors.subtext} accentColor={colors.accent}
+                  copiedMsg={t('copied')} />
+                <DrawerField label={t('fieldPhone')} value={form.telefono ?? ''}
                   editable={drawerMode !== 'view'}
                   onChangeText={v => setForm(f => ({ ...f, telefono: v }))}
                   placeholder="+39 000 0000000"
-                  bgColor={colors.background} textColor={colors.text} subtextColor={colors.subtext} accentColor={colors.accent} />
-                <DrawerField label={'Notes'} value={form.notes ?? ''}
+                  bgColor={colors.background} textColor={colors.text} subtextColor={colors.subtext} accentColor={colors.accent}
+                  copiedMsg={t('copied')} />
+                <DrawerField label={t('fieldNotes')} value={form.notes ?? ''}
                   editable={drawerMode !== 'view'}
                   onChangeText={v => setForm(f => ({ ...f, notes: v }))}
                   multiline
-                  bgColor={colors.background} textColor={colors.text} subtextColor={colors.subtext} accentColor={colors.accent} />
+                  bgColor={colors.background} textColor={colors.text} subtextColor={colors.subtext} accentColor={colors.accent}
+                  copiedMsg={t('copied')} />
 
                 {drawerMode !== 'view' && (
                   <View style={[s.hiddenRow, { backgroundColor: colors.background }]}>
                     <View style={{ flex: 1 }}>
-                      <Text style={[s.hiddenLabel, { color: colors.text }]}>{'Hidden entry'}</Text>
-                      <Text style={[s.hiddenSub, { color: colors.subtext }]}>{'Only visible in the hidden vault'}</Text>
+                      <Text style={[s.hiddenLabel, { color: colors.text }]}>{t('hiddenEntryLabel')}</Text>
+                      <Text style={[s.hiddenSub, { color: colors.subtext }]}>{t('hiddenEntrySub')}</Text>
                     </View>
                     <Switch
                       value={!!form.isHidden}
@@ -564,7 +580,7 @@ export default function Home() {
                 )}
                 {drawerMode === 'view' && form.isHidden && (
                   <View style={[s.hiddenBadge, { borderColor: colors.accent + '44', backgroundColor: colors.accent + '11' }]}>
-                    <Text style={[s.hiddenBadgeTxt, { color: colors.accent }]}>{'👁  Hidden entry'}</Text>
+                    <Text style={[s.hiddenBadgeTxt, { color: colors.accent }]}>{t('hiddenEntryBadge')}</Text>
                   </View>
                 )}
             </Animated.ScrollView>
@@ -576,7 +592,7 @@ export default function Home() {
                   style={[s.btnPrimary, { backgroundColor: colors.accent }]}
                   onPress={() => setDrawerMode('edit')}
                 >
-                  <Text style={[s.btnPrimaryTxt, { color: colors.background }]}>{'✏  Edit'}</Text>
+                  <Text style={[s.btnPrimaryTxt, { color: colors.background }]}>{t('editBtn')}</Text>
                 </TouchableOpacity>
               ) : (
                 <View style={s.footRow}>
@@ -584,14 +600,14 @@ export default function Home() {
                     style={[s.btnSecondary, { flex: 1, borderColor: colors.subtext + '44' }]}
                     onPress={closeDrawer}
                   >
-                    <Text style={[s.btnSecondaryTxt, { color: colors.subtext }]}>{'Cancel'}</Text>
+                    <Text style={[s.btnSecondaryTxt, { color: colors.subtext }]}>{t('cancel')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[s.btnPrimary, { flex: 2, backgroundColor: colors.accent }]}
                     onPress={handleSave}
                   >
                     <Text style={[s.btnPrimaryTxt, { color: colors.background }]}>
-                      {drawerMode === 'add' ? 'Save entry' : 'Save changes'}
+                      {drawerMode === 'add' ? t('saveEntry') : t('saveChanges')}
                     </Text>
                   </TouchableOpacity>
                 </View>

@@ -1,11 +1,13 @@
+import '@/constants/i18n';
 import { Image } from 'expo-image';
 import * as LocalAuthentication from 'expo-local-authentication';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   ActivityIndicator,
   Animated,
-  FlatList,
+  Dimensions,
   Platform,
   StatusBar,
   StyleSheet,
@@ -18,15 +20,20 @@ import {
   deriveKey,
   getAccountIcon,
   getAllUsers,
-  getBiometricCredential,
-  initStorage,
-  isBiometricEnabledForUser,
-  verifyPassword,
+  getBiometricCredential, initStorage,
+  isBiometricEnabledForUser, verifyPassword,
 } from '@/components/Encrypt';
 import { useTheme } from '@/components/ThemeContext';
 import { User } from '@/constants/types';
 
+const { width: W, height: H } = Dimensions.get('window');
+
 type AppState = 'loading' | 'no_users' | 'has_users';
+
+function isImageUri(s: string): boolean {
+  return s.startsWith('/') || s.startsWith('file:') || s.startsWith('content:')
+      || s.startsWith('ph://') || s.startsWith('asset-library:') || s.startsWith('http');
+}
 
 function roleLabel(role: User['role']): string {
   if (role === 'masterAdmin') return 'Master Admin';
@@ -34,105 +41,156 @@ function roleLabel(role: User['role']): string {
   return 'User';
 }
 
-function isImageUri(s: string): boolean {
-  return s.startsWith('/') || s.startsWith('file:') || s.startsWith('content:')
-      || s.startsWith('ph://') || s.startsWith('asset-library:') || s.startsWith('http');
-}
-
-// ─── Animated user card ───────────────────────────────────────────────────────
-function UserCard({
-  user, index, bioAvail, bioType, colors,
-  onPress, onBioPress,
+// ─── Avatar ───────────────────────────────────────────────────────────────────
+function Avatar({
+  user, size, roleColor, isMaster, colors,
 }: {
-  user: User; index: number; bioAvail: boolean; bioType: string; colors: any;
-  onPress: () => void; onBioPress: () => void;
+  user: User; size: number; roleColor: string; isMaster: boolean; colors: any;
 }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  // Read icon once on mount — no need for live refresh on the selection screen
-  const icon = getAccountIcon(user.id);
+  const icon      = getAccountIcon(user.id);
   const showImage = isImageUri(icon);
   const showEmoji = !showImage && icon && icon !== '👤';
+  const r         = size / 2;
+
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      {/* Outer shimmer ring */}
+      <View style={[
+        StyleSheet.absoluteFill,
+        { borderRadius: r, borderWidth: isMaster ? 1.5 : 1,
+          borderColor: roleColor + (isMaster ? '66' : '33') },
+      ]} />
+      {/* Inner ring */}
+      <View style={[
+        { position: 'absolute', inset: 6, borderRadius: r - 6,
+          borderWidth: 1, borderColor: roleColor + '22' },
+      ]} />
+      {/* Avatar circle */}
+      <View style={[
+        { width: size - 18, height: size - 18, borderRadius: r - 9,
+          backgroundColor: showImage ? 'transparent' : roleColor + '1A',
+          overflow: 'hidden', justifyContent: 'center', alignItems: 'center' },
+      ]}>
+        {showImage ? (
+          <Image
+            source={{ uri: icon }}
+            style={{ width: size - 18, height: size - 18, borderRadius: r - 9 }}
+            contentFit="cover"
+          />
+        ) : showEmoji ? (
+          <Text style={{ fontSize: size * 0.38 }}>{icon}</Text>
+        ) : (
+          <Text style={{ fontSize: size * 0.36, fontWeight: '700', color: roleColor }}>
+            {user.username.charAt(0).toUpperCase()}
+          </Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
+// ─── Master card — horizontal row, visually elevated ─────────────────────────
+function MasterCard({
+  user, index, bioAvail, bioType, colors, onPress, onBioPress,
+}: {
+  user: User; index: number; bioAvail: boolean; bioType: string;
+  colors: any; onPress: () => void; onBioPress: () => void;
+}) {
+  const anim       = useRef(new Animated.Value(0)).current;
+  const isBioEnabled = bioAvail && isBiometricEnabledForUser(user.id);
+  const bioIcon    = bioType === 'face' ? '🪪' : bioType === 'fingerprint' ? '☝' : '🔓';
 
   useEffect(() => {
-    Animated.spring(anim, {
-      toValue: 1,
-      delay: index * 80,
-      tension: 60,
-      friction: 12,
-      useNativeDriver: true,
-    }).start();
+    Animated.spring(anim, { toValue: 1, delay: index * 100, tension: 52, friction: 12, useNativeDriver: true }).start();
   }, []);
-
-  const isMaster = user.role === 'masterAdmin';
-  const isAdmin  = user.role === 'admin';
-  const isBioEnabled = bioAvail && isBiometricEnabledForUser(user.id);
-
-  const roleColor =
-    isMaster ? colors.accent :
-    isAdmin  ? '#7EB8C8'     :
-               colors.subtext;
-
-  const bioIcon =
-    bioType === 'face'        ? '🪪' :
-    bioType === 'fingerprint' ? '☝'  : '🔓';
 
   return (
     <Animated.View style={{
       opacity: anim,
-      transform: [{ translateY: anim.interpolate({ inputRange: [0,1], outputRange: [24,0] }) }],
+      transform: [{ translateY: anim.interpolate({ inputRange:[0,1], outputRange:[20,0] }) }],
     }}>
-      <TouchableOpacity
-        style={[
-          st.card,
-          { backgroundColor: colors.card },
-          isMaster && { borderColor: colors.accent + '55', borderWidth: 1 },
-        ]}
-        onPress={onPress}
-        activeOpacity={0.75}
-      >
-        {/* Avatar — image, emoji, or initial letter */}
-        <View style={[st.avatarWrap, {
-          backgroundColor: showImage ? 'transparent' : roleColor + '18',
-          borderColor: showImage ? 'transparent' : roleColor + '55',
-        }]}>
-          {showImage ? (
-            <Image
-              source={{ uri: icon }}
-              style={st.avatarImage}
-              contentFit="cover"
-            />
-          ) : showEmoji ? (
-            <Text style={st.avatarEmoji}>{icon}</Text>
-          ) : (
-            <Text style={[st.avatarLetter, { color: roleColor }]}>
-              {user.username.charAt(0).toUpperCase()}
-            </Text>
-          )}
-          {isMaster && (
-            <View style={[st.crownBadge, { backgroundColor: colors.accent }]}>
-              <Text style={st.crownTxt}>★</Text>
-            </View>
-          )}
-        </View>
+      <TouchableOpacity onPress={onPress} activeOpacity={0.82} style={[
+        st.masterCard, { backgroundColor: colors.card, borderColor: colors.accent + '55' },
+      ]}>
+        {/* Faint accent glow top-right */}
+        <View style={[st.masterGlow, { backgroundColor: colors.accent + '0A' }]} pointerEvents="none" />
+
+        {/* Avatar */}
+        <Avatar user={user} size={58} roleColor={colors.accent} isMaster colors={colors} />
 
         {/* Info */}
-        <View style={st.cardInfo}>
-          <Text style={[st.cardName, { color: colors.text }]}>{user.username}</Text>
-          <Text style={[st.cardRole, { color: roleColor }]}>{roleLabel(user.role)}</Text>
+        <View style={st.masterInfo}>
+          <View style={st.masterNameRow}>
+            <Text style={[st.masterName, { color: colors.text }]}>{user.username}</Text>
+            <View style={[st.masterStarBadge, { backgroundColor: colors.accent }]}>
+              <Text style={[st.masterStarTxt, { color: colors.background }]}>★</Text>
+            </View>
+          </View>
+          <Text style={[st.masterRole, { color: colors.accent }]}>Master Admin</Text>
         </View>
 
-        {/* Right: biometric button or arrow */}
+        {/* Right side */}
         {isBioEnabled ? (
           <TouchableOpacity
-            style={[st.bioBtn, { backgroundColor: colors.accent + '18', borderColor: colors.accent + '55' }]}
+            style={[st.masterBioBtn, { backgroundColor: colors.accent + '14', borderColor: colors.accent + '44' }]}
             onPress={onBioPress}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            hitSlop={{ top:10, bottom:10, left:10, right:10 }}
           >
-            <Text style={st.bioBtnTxt}>{bioIcon}</Text>
+            <Text style={{ fontSize: 18 }}>{bioIcon}</Text>
           </TouchableOpacity>
         ) : (
-          <View style={[st.arrowWrap, { backgroundColor: colors.background }]}>
-            <Text style={[st.arrow, { color: colors.subtext }]}>›</Text>
+          <View style={[st.masterArrow, { backgroundColor: colors.background }]}>
+            <Text style={[{ fontSize: 20, color: colors.accent }]}>›</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+// ─── Sub-account row — compact ─────────────────────────────────────────────────
+function SubAccountRow({
+  user, index, bioAvail, bioType, colors, onPress, onBioPress,
+}: {
+  user: User; index: number; bioAvail: boolean; bioType: string;
+  colors: any; onPress: () => void; onBioPress: () => void;
+}) {
+  const anim       = useRef(new Animated.Value(0)).current;
+  const isBioEnabled = bioAvail && isBiometricEnabledForUser(user.id);
+  const isAdmin    = user.role === 'admin';
+  const roleColor  = isAdmin ? '#7EB8C8' : colors.subtext;
+  const bioIcon    = bioType === 'face' ? '🪪' : bioType === 'fingerprint' ? '☝' : '🔓';
+
+  useEffect(() => {
+    Animated.spring(anim, { toValue: 1, delay: index * 90, tension: 55, friction: 12, useNativeDriver: true }).start();
+  }, []);
+
+  return (
+    <Animated.View style={{
+      opacity: anim,
+      transform: [{ translateX: anim.interpolate({ inputRange:[0,1], outputRange:[-20,0] }) }],
+    }}>
+      <TouchableOpacity onPress={onPress} activeOpacity={0.75}
+        style={[st.subRow, { backgroundColor: colors.card, borderColor: colors.subtext + '22' }]}
+      >
+        <Avatar user={user} size={50} roleColor={roleColor} isMaster={false} colors={colors} />
+
+        <View style={{ flex: 1, gap: 2 }}>
+          <Text style={[st.subName, { color: colors.text }]}>{user.username}</Text>
+          <Text style={[st.subRole, { color: roleColor }]}>{roleLabel(user.role)}</Text>
+        </View>
+
+        {isBioEnabled ? (
+          <TouchableOpacity
+            style={[st.subBioBtn, { backgroundColor: colors.accent + '14', borderColor: colors.accent + '44' }]}
+            onPress={onBioPress}
+            hitSlop={{ top:10, bottom:10, left:10, right:10 }}
+          >
+            <Text style={{ fontSize: 17 }}>{bioIcon}</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={[st.subArrow, { backgroundColor: colors.background }]}>
+            <Text style={[{ fontSize: 20, color: colors.subtext }]}>›</Text>
           </View>
         )}
       </TouchableOpacity>
@@ -142,32 +200,47 @@ function UserCard({
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function Index() {
-  const router = useRouter();
+  const router        = useRouter();
   const { colors, loadUserTheme } = useTheme();
+  const { t }         = useTranslation();
+  // When the user presses back from Login, Login passes this param so we
+  // know not to auto-redirect again — they explicitly chose to come back.
+  const { noAutoRedirect } = useLocalSearchParams<{ noAutoRedirect?: string }>();
+
   const [appState, setAppState] = useState<AppState>('loading');
   const [users,    setUsers]    = useState<User[]>([]);
   const [bioAvail, setBioAvail] = useState(false);
-  const [bioType,  setBioType]  = useState<'face' | 'fingerprint' | 'generic'>('generic');
+  const [bioType,  setBioType]  = useState<'face'|'fingerprint'|'generic'>('generic');
 
-  const titleAnim = useRef(new Animated.Value(0)).current;
+  // Entrance animations
+  const headerAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.spring(titleAnim, { toValue: 1, tension: 50, friction: 12, useNativeDriver: true }).start();
     try {
       const saved = getAllUsers();
-      if (saved.length === 0) setAppState('no_users');
-      else { setUsers(saved); setAppState('has_users'); }
+      if (saved.length === 0) { setAppState('no_users'); return; }
+      // Single account: auto-redirect to Login — but NOT if the user just
+      // pressed back from Login (noAutoRedirect flag prevents the loop).
+      if (saved.length === 1 && !noAutoRedirect) {
+        router.push({ pathname: '/Login', params: { userId: saved[0].id, fromIndex: '1' } });
+        return;
+      }
+      setUsers(saved);
+      setAppState('has_users');
     } catch { setAppState('no_users'); }
   }, []);
 
   useEffect(() => {
-    if (appState === 'no_users') router.replace('/CreateUser');
+    if (appState === 'no_users') { router.replace('/CreateUser'); return; }
+    if (appState === 'has_users') {
+      Animated.spring(headerAnim, { toValue:1, tension:50, friction:12, useNativeDriver:true }).start();
+    }
   }, [appState]);
 
   useEffect(() => {
     (async () => {
       try {
-        const hasHw    = await LocalAuthentication.hasHardwareAsync();
+        const hasHw = await LocalAuthentication.hasHardwareAsync();
         const enrolled = await LocalAuthentication.isEnrolledAsync();
         if (!hasHw || !enrolled) return;
         const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
@@ -186,110 +259,158 @@ export default function Index() {
     );
   }
 
-  async function handleBiometricLogin(user: User) {
+  async function handleBioLogin(user: User) {
     const cred = getBiometricCredential(user.id);
-    if (cred === undefined) { router.push({ pathname: '/Login', params: { userId: user.id } }); return; }
+    if (cred === undefined) { router.push({ pathname:'/Login', params:{ userId: user.id } }); return; }
     try {
-      const msg = bioType === 'face' ? 'Use Face ID to unlock' : bioType === 'fingerprint' ? 'Use fingerprint to unlock' : 'Authenticate to unlock';
-      const result = await LocalAuthentication.authenticateAsync({ promptMessage: msg, fallbackLabel: 'Use password', cancelLabel: 'Cancel', disableDeviceFallback: false });
+      const msg = bioType==='face' ? 'Use Face ID' : bioType==='fingerprint' ? 'Use fingerprint' : 'Authenticate';
+      const result = await LocalAuthentication.authenticateAsync({ promptMessage: msg, cancelLabel: 'Cancel', disableDeviceFallback: false });
       if (result.success) {
         try {
           if (user.role === 'masterAdmin') { initStorage(deriveKey(cred)); if (!verifyPassword(cred, user.passwordHash)) return; }
           else { if (!verifyPassword(cred, user.passwordHash)) return; }
           loadUserTheme(user.id, user.role === 'masterAdmin');
-          router.replace({ pathname: '/Home', params: { userId: user.id } });
+          router.replace({ pathname:'/Home', params:{ userId: user.id } });
         } catch {}
       }
     } catch {}
   }
 
+  const masterUser = users.find(u => u.role === 'masterAdmin');
+  const subUsers   = users.filter(u => u.role !== 'masterAdmin');
+
   return (
     <View style={[st.root, { backgroundColor: colors.background }]}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
-      {/* Decorative top glow */}
-      <View style={[st.topGlow, { backgroundColor: colors.accent + '18' }]} />
+      {/* ── Background decoration ─────────────────────────────────── */}
+      {/* Large radial glow behind the whole page */}
+      <View style={[st.bgGlow, { backgroundColor: colors.accent + '09' }]} pointerEvents="none" />
+      {/* Faint grid lines for depth */}
+      <View style={[st.bgGrid, { borderColor: colors.accent + '07' }]} pointerEvents="none" />
 
-      {/* Header */}
+      {/* ── Header ───────────────────────────────────────────────── */}
       <Animated.View style={[st.header, {
-        opacity: titleAnim,
-        transform: [{ translateY: titleAnim.interpolate({ inputRange: [0,1], outputRange: [-16,0] }) }],
+        opacity: headerAnim,
+        transform: [{ translateY: headerAnim.interpolate({ inputRange:[0,1], outputRange:[-12,0] }) }],
       }]}>
-        <Text style={[st.appName, { color: colors.accent }]}>LocalKey</Text>
-        <Text style={[st.tagline, { color: colors.subtext }]}>Your vault, your keys</Text>
+        {/* App name with accent dot */}
+        <View style={st.appNameRow}>
+          <Text style={[st.appName, { color: colors.text }]}>Local</Text>
+          <Text style={[st.appNameAccent, { color: colors.accent }]}>Key</Text>
+          <View style={[st.appNameDot, { backgroundColor: colors.accent }]} />
+        </View>
+        <Text style={[st.tagline, { color: colors.subtext }]}>{t('yourVaultTagline')}</Text>
       </Animated.View>
 
-      {/* Divider */}
-      <View style={[st.divider, { backgroundColor: colors.card }]} />
+      {/* ── Thin accent rule ─────────────────────────────────────── */}
+      <View style={[st.rule, { backgroundColor: colors.accent + '22' }]} />
 
-      {/* User list */}
-      <FlatList
-        data={users}
-        keyExtractor={u => u.id}
-        contentContainerStyle={st.list}
-        showsVerticalScrollIndicator={false}
-        ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
-        ListHeaderComponent={
-          <Text style={[st.listLabel, { color: colors.subtext }]}>
-            {users.length === 1 ? '1 account' : `${users.length} accounts`}
-          </Text>
-        }
-        renderItem={({ item, index }) => (
-          <UserCard
-            user={item}
-            index={index}
+      {/* ── Content ──────────────────────────────────────────────── */}
+      <View style={st.content}>
+
+        {/* Master account — hero card */}
+        {masterUser && (
+          <MasterCard
+            user={masterUser}
+            index={0}
             bioAvail={bioAvail}
             bioType={bioType}
             colors={colors}
-            onPress={() => router.push({ pathname: '/Login', params: { userId: item.id } })}
-            onBioPress={() => handleBiometricLogin(item)}
+            onPress={() => router.push({ pathname:'/Login', params:{ userId: masterUser.id } })}
+            onBioPress={() => handleBioLogin(masterUser)}
           />
         )}
-      />
 
-      {/* Add account button */}
-      <View style={st.footer}>
+        {/* Sub-accounts section */}
+        {subUsers.length > 0 && (
+          <View style={st.subSection}>
+            <Text style={[st.subSectionLabel, { color: colors.subtext }]}>
+              {subUsers.length === 1 ? '1 account' : `${subUsers.length} accounts`}
+            </Text>
+            <View style={[st.subDivider, { backgroundColor: colors.card }]} />
+            <View style={st.subList}>
+              {subUsers.map((u, i) => (
+                <SubAccountRow
+                  key={u.id}
+                  user={u}
+                  index={i + 1}
+                  bioAvail={bioAvail}
+                  bioType={bioType}
+                  colors={colors}
+                  onPress={() => router.push({ pathname:'/Login', params:{ userId: u.id } })}
+                  onBioPress={() => handleBioLogin(u)}
+                />
+              ))}
+            </View>
+          </View>
+        )}
+      </View>
+
+      {/* ── Footer ───────────────────────────────────────────────── */}
+      <View style={[st.footer, { borderColor: colors.card }]}>
         <TouchableOpacity
-          style={[st.addBtn, { borderColor: colors.card, backgroundColor: colors.card }]}
+          style={[st.addBtn, { backgroundColor: colors.card }]}
           onPress={() => router.push('/CreateUser')}
           activeOpacity={0.75}
         >
-          <Text style={[st.addBtnPlus, { color: colors.accent }]}>＋</Text>
-          <Text style={[st.addBtnTxt, { color: colors.text }]}>Add account</Text>
+          <View style={[st.addBtnIcon, { backgroundColor: colors.accent + '18', borderColor: colors.accent + '33' }]}>
+            <Text style={[{ fontSize: 16, color: colors.accent, lineHeight: 20 }]}>＋</Text>
+          </View>
+          <Text style={[st.addBtnTxt, { color: colors.subtext }]}>{t('addAccount')}</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
 const st = StyleSheet.create({
-  root:        { flex: 1, paddingTop: Platform.OS === 'android' ? 48 : 60 },
-  centered:    { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  topGlow:     { position: 'absolute', top: 0, left: 0, right: 0, height: 260, borderBottomLeftRadius: 80, borderBottomRightRadius: 80 },
-  header:      { paddingHorizontal: 28, paddingBottom: 24, gap: 6 },
-  appName:     { fontSize: 46, fontWeight: '800', letterSpacing: -1.5 },
-  tagline:     { fontSize: 14, letterSpacing: 0.4 },
-  divider:     { height: 1, marginHorizontal: 20, marginBottom: 20 },
-  listLabel:   { fontSize: 11, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12, paddingHorizontal: 4 },
-  list:        { paddingHorizontal: 20, paddingBottom: 20 },
+  root:            { flex: 1, paddingTop: Platform.OS === 'android' ? 44 : 58 },
+  centered:        { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
-  card:        { flexDirection: 'row', alignItems: 'center', borderRadius: 18, padding: 16, gap: 14 },
-  avatarWrap:  { width: 52, height: 52, borderRadius: 16, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
-  avatarImage:  { width: 52, height: 52, borderRadius: 16 },
-  avatarEmoji:  { fontSize: 26 },
-  avatarLetter:{ fontSize: 22, fontWeight: '700' },
-  crownBadge:  { position: 'absolute', bottom: -4, right: -4, width: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },
-  crownTxt:    { fontSize: 9, color: '#000' },
-  cardInfo:    { flex: 1, gap: 3 },
-  cardName:    { fontSize: 16, fontWeight: '700' },
-  cardRole:    { fontSize: 12, fontWeight: '500', letterSpacing: 0.2 },
-  arrowWrap:   { width: 32, height: 32, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
-  arrow:       { fontSize: 22, lineHeight: 26 },
-  bioBtn:      { width: 44, height: 44, borderRadius: 14, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center' },
-  bioBtnTxt:   { fontSize: 20 },
+  // Background decoration
+  bgGlow:          { position: 'absolute', top: -H * 0.1, left: -W * 0.2, width: W * 1.4, height: H * 0.8, borderRadius: W, pointerEvents: 'none' },
+  bgGrid:          { position: 'absolute', inset: 0, borderWidth: 0.5, borderRadius: 0, opacity: 1, pointerEvents: 'none' },
 
-  footer:      { paddingHorizontal: 20, paddingBottom: Platform.OS === 'android' ? 28 : 40, paddingTop: 10 },
-  addBtn:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, borderRadius: 16, paddingVertical: 16 },
-  addBtnPlus:  { fontSize: 20, lineHeight: 22 },
-  addBtnTxt:   { fontSize: 15, fontWeight: '600' },
+  // Header
+  header:          { paddingHorizontal: 28, paddingTop: 8, paddingBottom: 22, gap: 6 },
+  appNameRow:      { flexDirection: 'row', alignItems: 'flex-end', gap: 0 },
+  appName:         { fontSize: 44, fontWeight: '800', letterSpacing: -2 },
+  appNameAccent:   { fontSize: 44, fontWeight: '800', letterSpacing: -2 },
+  appNameDot:      { width: 7, height: 7, borderRadius: 3.5, marginBottom: 10, marginLeft: 3 },
+  tagline:         { fontSize: 13, letterSpacing: 0.5 },
+  rule:            { height: 1, marginHorizontal: 28, marginBottom: 24 },
+
+  // Content
+  content:         { flex: 1, paddingHorizontal: 20, gap: 20 },
+
+  // Master card — horizontal, elevated
+  masterCard:      { flexDirection: 'row', alignItems: 'center', borderRadius: 18, borderWidth: 1.5, padding: 16, gap: 14, overflow: 'hidden' },
+  masterGlow:      { position: 'absolute', top: -40, right: -40, width: 140, height: 140, borderRadius: 70 },
+  masterInfo:      { flex: 1, gap: 4 },
+  masterNameRow:   { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  masterName:      { fontSize: 16, fontWeight: '700' },
+  masterStarBadge: { width: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },
+  masterStarTxt:   { fontSize: 9, fontWeight: '800' },
+  masterRole:      { fontSize: 11, fontWeight: '600', letterSpacing: 0.4 },
+  masterBioBtn:    { width: 40, height: 40, borderRadius: 12, borderWidth: 1, justifyContent: 'center', alignItems: 'center' },
+  masterArrow:     { width: 30, height: 30, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },
+
+  // Sub-account rows
+  subSection:      { gap: 12 },
+  subSectionLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.2, textTransform: 'uppercase', paddingLeft: 4 },
+  subDivider:      { height: 1 },
+  subList:         { gap: 8 },
+  subRow:          { flexDirection: 'row', alignItems: 'center', borderRadius: 16, borderWidth: 1, padding: 14, gap: 14 },
+  subName:         { fontSize: 15, fontWeight: '600' },
+  subRole:         { fontSize: 11, fontWeight: '500', letterSpacing: 0.3 },
+  subBioBtn:       { width: 40, height: 40, borderRadius: 12, borderWidth: 1, justifyContent: 'center', alignItems: 'center' },
+  subArrow:        { width: 30, height: 30, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },
+
+  // Footer
+  footer:          { borderTopWidth: 1, paddingHorizontal: 20, paddingTop: 14, paddingBottom: Platform.OS === 'android' ? 24 : 36 },
+  addBtn:          { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 14, padding: 14 },
+  addBtnIcon:      { width: 30, height: 30, borderRadius: 9, borderWidth: 1, justifyContent: 'center', alignItems: 'center' },
+  addBtnTxt:       { fontSize: 14, fontWeight: '500' },
 });

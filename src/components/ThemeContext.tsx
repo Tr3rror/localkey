@@ -10,12 +10,11 @@
 
 import { DEFAULT_THEME, ThemeColors, ThemeSlot } from '@/constants/types';
 import React, {
-    createContext, useCallback, useContext, useEffect, useState,
+  createContext, useCallback, useContext, useEffect, useState,
 } from 'react';
+import { Appearance, NativeModules, Platform } from 'react-native';
 
 // ─── Lazy storage access ──────────────────────────────────────────────────────
-// Storage may not be initialized when ThemeProvider mounts (bootstrap phase),
-// so we always wrap in try/catch.
 function safeStorage() {
   try {
     const { getStorage } = require('@/components/Encrypt');
@@ -26,14 +25,33 @@ function safeStorage() {
 }
 
 // ─── Storage keys ─────────────────────────────────────────────────────────────
-// Global theme (MasterAdmin) — used by all screens
-const THEME_GLOBAL_KEY = 'theme_global';
-// Per-user theme key — used only while that user is active
+const THEME_GLOBAL_KEY    = 'theme_global';
+const FIRST_LAUNCH_KEY    = 'first_launch_done';
 function themeUserKey(userId: string) { return `theme_user_${userId}`; }
-// Slots are per-user too
 function slotsUserKey(userId: string) { return `theme_slots_${userId}`; }
 
 const MAX_SLOTS = 5;
+
+// ─── Detect device locale ─────────────────────────────────────────────────────
+function getDeviceLocale(): string {
+  try {
+    // iOS
+    if (Platform.OS === 'ios') {
+      const locale: string =
+        NativeModules.SettingsManager?.settings?.AppleLocale ||
+        NativeModules.SettingsManager?.settings?.AppleLanguages?.[0] ||
+        'en';
+      return locale.slice(0, 2).toLowerCase();
+    }
+    // Android
+    const locale: string =
+      NativeModules.I18nManager?.localeIdentifier ||
+      'en';
+    return locale.slice(0, 2).toLowerCase();
+  } catch {
+    return 'en';
+  }
+}
 
 // ─── Context type ─────────────────────────────────────────────────────────────
 type ThemeContextValue = {
@@ -61,11 +79,37 @@ export function AppThemeProvider({ children }: { children: React.ReactNode }) {
   const [activeUserId, setActiveUserId]   = useState<string | null>(null);
   const [isMasterCtx,  setIsMasterCtx]   = useState(true);
 
-  // ── Load global (MasterAdmin) theme on mount ──────────────────────────────
+  // ── Load global (MasterAdmin) theme on mount + first-launch detection ────────
   useEffect(() => {
     const storage = safeStorage();
     if (!storage) return;
     try {
+      // Check if this is the first ever launch
+      const firstLaunchDone = storage.getString(FIRST_LAUNCH_KEY);
+      if (!firstLaunchDone) {
+        // ── First launch: detect device language and color scheme ─────────
+        storage.set(FIRST_LAUNCH_KEY, '1');
+
+        // Language: if device is Italian, use 'it'; otherwise 'en'
+        const locale = getDeviceLocale();
+        const lang = locale === 'it' ? 'it' : 'en';
+        try {
+          const { setStoredLanguage } = require('@/components/Encrypt');
+          setStoredLanguage(lang);
+          // i18n may not be imported here; language will be applied in _layout
+        } catch {}
+
+        // Color scheme: dark → DEFAULT_THEME (dark gold), light → Paper theme
+        const scheme = Appearance.getColorScheme();
+        const firstTheme: ThemeColors = scheme === 'dark'
+          ? DEFAULT_THEME
+          : { accent: '#8B6914', background: '#F5F0E8', card: '#FFFFFF', text: '#1A1208', subtext: '#8A7A60' }; // Paper
+        setColors(firstTheme);
+        storage.set(THEME_GLOBAL_KEY, JSON.stringify(firstTheme));
+        return;
+      }
+
+      // Normal launch: restore saved theme
       const raw = storage.getString(THEME_GLOBAL_KEY);
       if (raw) setColors(JSON.parse(raw));
     } catch { /* use default */ }

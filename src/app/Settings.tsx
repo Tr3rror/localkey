@@ -1,3 +1,8 @@
+/**
+ * Settings.tsx — tabbed settings page for LocalKey
+ * Tabs: Appearance · Vault · Data · Accounts · About
+ */
+
 import i18n from '@/constants/i18n';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -6,21 +11,9 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  Dimensions,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+  Alert, Animated, Dimensions, KeyboardAvoidingView,
+  Linking, Modal, Platform, Pressable, ScrollView,
+  StyleSheet, Switch, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 
 import { ColorPickerModal } from '@/components/ColorPickerModal';
@@ -39,252 +32,188 @@ import {
   saveUser,
   setStoredLanguage,
   toggleBiometricForUser,
-  verifyPassword
+  verifyPassword,
 } from '@/components/Encrypt';
 import {
-  exportCsv, exportExcel,
-  importCsv, importExcel,
-  type ImportResult,
+  exportCsv, exportExcel, importCsv, importExcel, type ImportResult,
 } from '@/components/FileManipulation';
 import { useTheme } from '@/components/ThemeContext';
-import { PRESET_THEMES, ThemeColors, User } from '@/constants/types';
+import { OLED_THEME, PRESET_THEMES, ThemeColors, User } from '@/constants/types';
 
 const { width: SCREEN_W } = Dimensions.get('window');
-
-// ─── Luminance helper ─────────────────────────────────────────────────────────
-function isDarkColor(hex: string): boolean {
-  try {
-    const h = hex.replace('#', '');
-    const r = parseInt(h.slice(0, 2), 16) / 255;
-    const g = parseInt(h.slice(2, 4), 16) / 255;
-    const b = parseInt(h.slice(4, 6), 16) / 255;
-    const toLinear = (c: number) => c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-    const L = 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
-    return L < 0.35;
-  } catch {
-    return true;
-  }
-}
-function contrastColor(bgHex: string): string {
-  return isDarkColor(bgHex) ? '#FFFFFF' : '#000000';
-}
-
-// ─── Icons ────────────────────────────────────────────────────────────────────
-const I_BACK    = '←';
-const I_TRASH   = '🗑';
-const I_EDIT    = '✏';
-const I_LOCK    = '🔒';
-const I_EYE     = '👁';
-const I_FINGER  = '☞';
-const I_STATS   = '◈';
-const I_IMPORT  = '↓';
-const I_EXPORT  = '↑';
-const I_CHEVRON = '›';
+const FEEDBACK_URL = 'https://docs.google.com/forms/d/e/1FAIpQLScGIJE8Iem3RmMhwAqptlLjwiYNJldu6h4hjdzob1zogWdyvQ/viewform?usp=publish-editor';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+function isDark(hex: string): boolean {
+  try {
+    const h = hex.replace('#','');
+    const r = parseInt(h.slice(0,2),16)/255, g = parseInt(h.slice(2,4),16)/255, b = parseInt(h.slice(4,6),16)/255;
+    const lin = (c: number) => c <= 0.03928 ? c/12.92 : ((c+0.055)/1.055)**2.4;
+    return 0.2126*lin(r)+0.7152*lin(g)+0.0722*lin(b) < 0.35;
+  } catch { return true; }
+}
+function contrast(hex: string) { return isDark(hex) ? '#FFFFFF' : '#000000'; }
+function isUri(s: string) {
+  return s.startsWith('/') || s.startsWith('file:') || s.startsWith('content:')
+      || s.startsWith('ph://') || s.startsWith('asset-library:') || s.startsWith('http');
+}
 function roleLabel(role: User['role']) {
   if (role === 'masterAdmin') return 'Master Admin';
-  if (role === 'admin')       return 'Admin';
+  if (role === 'admin') return 'Admin';
   return 'User';
 }
 function roleColor(role: User['role'], accent: string) {
   if (role === 'masterAdmin') return accent;
-  if (role === 'admin')       return '#7EB8C8';
-  return '#555';
+  if (role === 'admin') return '#7EB8C8';
+  return '#888';
 }
 
-// ─── Section ─────────────────────────────────────────────────────────────────
-function Section({ title, children, colors }: {
-  title: string; children: React.ReactNode; colors: ThemeColors;
-}) {
-  return (
-    <View style={sec.wrap}>
-      <Text style={[sec.title, { color: colors.accent }]}>{title}</Text>
-      {children}
-    </View>
-  );
-}
-const sec = StyleSheet.create({
-  wrap:  { marginBottom: 28 },
-  title: { fontSize: 10, fontWeight: '800', letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 12 },
+// ─── Shared bottom-sheet styles ───────────────────────────────────────────────
+const bs = StyleSheet.create({
+  backdrop: { position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'#00000088' },
+  card:     { position:'absolute', bottom:0, left:0, right:0, borderTopLeftRadius:22, borderTopRightRadius:22, padding:24, gap:14 },
+  title:    { fontSize:17, fontWeight:'700' },
+  input:    { borderWidth:1, borderRadius:12, padding:13, fontSize:15 },
+  btnRow:   { flexDirection:'row', gap:10 },
+  btn:      { flex:1, borderRadius:12, paddingVertical:14, alignItems:'center', borderWidth:1 },
 });
 
-// ─── Row ─────────────────────────────────────────────────────────────────────
+// ─── Row component ────────────────────────────────────────────────────────────
 function Row({ label, sub, right, onPress, colors }: {
   label: string; sub?: string; right?: React.ReactNode;
   onPress?: () => void; colors: ThemeColors;
 }) {
   const inner = (
-    <View style={[r.wrap, { backgroundColor: colors.card }]}>
-      <View style={{ flex: 1 }}>
-        <Text style={[r.label, { color: colors.text }]}>{label}</Text>
-        {!!sub && <Text style={[r.sub, { color: colors.subtext }]}>{sub}</Text>}
+    <View style={[row.wrap, { backgroundColor: colors.card }]}>
+      <View style={{ flex:1 }}>
+        <Text style={[row.label, { color: colors.text }]}>{label}</Text>
+        {!!sub && <Text style={[row.sub, { color: colors.subtext }]}>{sub}</Text>}
       </View>
-      {right ?? (onPress ? <Text style={[r.chevron, { color: colors.subtext }]}>{I_CHEVRON}</Text> : null)}
+      {right ?? (onPress ? <Text style={[row.chevron, { color: colors.subtext }]}>›</Text> : null)}
     </View>
   );
-  if (onPress) return <TouchableOpacity onPress={onPress} activeOpacity={0.7}>{inner}</TouchableOpacity>;
+  if (onPress) return <TouchableOpacity onPress={onPress} activeOpacity={0.75}>{inner}</TouchableOpacity>;
   return inner;
 }
-const r = StyleSheet.create({
-  wrap:    { flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 14, marginBottom: 8, gap: 12 },
-  label:   { fontSize: 15, fontWeight: '600' },
-  sub:     { fontSize: 12, marginTop: 3 },
-  chevron: { fontSize: 20 },
+const row = StyleSheet.create({
+  wrap:    { flexDirection:'row', alignItems:'center', padding:16, borderRadius:14, marginBottom:10, gap:12 },
+  label:   { fontSize:15, fontWeight:'600' },
+  sub:     { fontSize:12, marginTop:3, lineHeight:17 },
+  chevron: { fontSize:22 },
 });
 
-// ─── Shared bottom sheet styles ───────────────────────────────────────────────
-const bs = StyleSheet.create({
-  backdrop: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#00000085' },
-  card:     { position: 'absolute', bottom: 0, left: 0, right: 0, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24, gap: 14 },
-  title:    { fontSize: 16, fontWeight: '700' },
-  input:    { borderWidth: 1, borderRadius: 10, padding: 12, fontSize: 15 },
-  btnRow:   { flexDirection: 'row', gap: 10 },
-  btn:      { flex: 1, borderRadius: 10, paddingVertical: 13, alignItems: 'center', borderWidth: 1 },
+// ─── SectionLabel ─────────────────────────────────────────────────────────────
+function SL({ label, color }: { label: string; color: string }) {
+  return <Text style={[sl.t, { color }]}>{label}</Text>;
+}
+const sl = StyleSheet.create({
+  t: { fontSize:10, fontWeight:'800', letterSpacing:1.2, textTransform:'uppercase', marginBottom:10, marginTop:6 },
 });
 
-// ─── User edit drawer ─────────────────────────────────────────────────────────
+// ─── UserEditDrawer ───────────────────────────────────────────────────────────
 function UserEditDrawer({ user, currentUser, onClose, onSaved, colors }: {
-  user: User; currentUser: User;
-  onClose: () => void; onSaved: () => void; colors: ThemeColors;
+  user: User; currentUser: User; onClose: () => void; onSaved: () => void; colors: ThemeColors;
 }) {
-  const [username,    setUsername]    = useState(user.username);
-  const [password,    setPassword]    = useState('');
-  const [showPwd,     setShowPwd]     = useState(false);
-  const [clearPwd,    setClearPwd]    = useState(false);
-  const [role,        setRole]        = useState(user.role);
+  const { t } = useTranslation();
+  const [username, setUsername] = useState(user.username);
+  const [password, setPassword] = useState('');
+  const [showPwd,  setShowPwd]  = useState(false);
+  const [clearPwd, setClearPwd] = useState(false);
+  const [role,     setRole]     = useState(user.role);
   const anim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.spring(anim, { toValue: 1, useNativeDriver: true, tension: 70, friction: 12 }).start();
+    Animated.spring(anim, { toValue:1, useNativeDriver:true, tension:70, friction:12 }).start();
   }, []);
 
   function close() {
-    Animated.timing(anim, { toValue: 0, duration: 180, useNativeDriver: true }).start(onClose);
+    Animated.timing(anim, { toValue:0, duration:180, useNativeDriver:true }).start(onClose);
   }
 
-  const translateY    = anim.interpolate({ inputRange: [0, 1], outputRange: [500, 0] });
+  const translateY = anim.interpolate({ inputRange:[0,1], outputRange:[600,0] });
   const isSelf        = user.id === currentUser.id;
   const canChangeRole = currentUser.role === 'masterAdmin' && user.role !== 'masterAdmin' && !isSelf;
   const canDelete     = currentUser.role === 'masterAdmin' && user.role !== 'masterAdmin' && !isSelf;
 
   function handleSave() {
-    if (!username.trim()) { Alert.alert('Required', 'Username cannot be empty.'); return; }
-    let newHash: string;
-    if (clearPwd) {
-      newHash = ''; // explicitly set to empty password
-    } else if (password) {
-      newHash = hashPassword(password);
-    } else {
-      newHash = user.passwordHash; // keep existing
-    }
-    saveUser({
-      ...user,
-      username: username.trim(),
-      passwordHash: newHash,
-      role: canChangeRole ? role : user.role,
-    });
+    if (!username.trim()) { Alert.alert(t('required'), t('usernameRequired')); return; }
+    const newHash = clearPwd ? '' : password ? hashPassword(password) : user.passwordHash;
+    saveUser({ ...user, username: username.trim(), passwordHash: newHash, role: canChangeRole ? role : user.role });
     onSaved(); close();
   }
 
   function handleDelete() {
-    Alert.alert('Delete user', `Delete "${user.username}"? This cannot be undone.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => { deleteUser(user.id); onSaved(); close(); } },
+    Alert.alert(t('deleteUser'), t('deleteUserMsg'), [
+      { text: t('cancel'), style:'cancel' },
+      { text: t('delete'), style:'destructive', onPress: () => { deleteUser(user.id); onSaved(); close(); } },
     ]);
   }
 
-  
   return (
     <>
       <Pressable style={StyleSheet.absoluteFill} onPress={close} />
-      <Animated.View style={[ud.drawer, { backgroundColor: colors.card, transform: [{ translateY }] }]}>
-        <View style={[ud.handle, { backgroundColor: colors.subtext + '44' }]} />
+      <Animated.View style={[ud.drawer, { backgroundColor: colors.card, transform:[{ translateY }] }]}>
+        <View style={[ud.handle, { backgroundColor: colors.subtext+'44' }]} />
 
-        <View style={[ud.header, { borderColor: colors.background }]}>
-          <View>
-            <Text style={[ud.name, { color: colors.text }]}>
-              {user.username}{isSelf ? ' (you)' : ''}
-            </Text>
-            <Text style={[ud.roleText, { color: roleColor(user.role, colors.accent) }]}>
-              {roleLabel(user.role)}
-            </Text>
+        <View style={[ud.head, { borderColor: colors.background }]}>
+          <View style={{ flex:1 }}>
+            <Text style={[ud.name, { color: colors.text }]}>{user.username}{isSelf ? ' (you)' : ''}</Text>
+            <Text style={[ud.roleT, { color: roleColor(user.role, colors.accent) }]}>{roleLabel(user.role)}</Text>
           </View>
           {canDelete && (
             <TouchableOpacity style={ud.delBtn} onPress={handleDelete}>
-              <Text style={{ fontSize: 18 }}>{I_TRASH}</Text>
+              <Text style={{ fontSize:18 }}>🗑</Text>
             </TouchableOpacity>
           )}
         </View>
 
-        <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
+        <KeyboardAvoidingView behavior="padding" style={{ flex:1 }}>
           <ScrollView contentContainerStyle={ud.body} keyboardShouldPersistTaps="handled">
-
-            <Text style={[ud.fieldLabel, { color: colors.subtext }]}>USERNAME</Text>
+            <Text style={[ud.fLabel, { color: colors.subtext }]}>{t('username').toUpperCase()}</Text>
             <TextInput
-              style={[ud.input, { color: colors.text, borderColor: colors.background, backgroundColor: colors.background }]}
-              value={username}
-              onChangeText={setUsername}
-              autoCapitalize="none"
-              autoCorrect={false}
+              style={[ud.inp, { color: colors.text, borderColor: colors.background, backgroundColor: colors.background }]}
+              value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false}
             />
 
-            <Text style={[ud.fieldLabel, { color: colors.subtext }]}>
-              {isSelf ? 'CHANGE PASSWORD' : 'NEW PASSWORD'}
+            <Text style={[ud.fLabel, { color: colors.subtext }]}>
+              {(isSelf ? t('changePassword') : t('newPassword')).toUpperCase()}
             </Text>
             <View style={ud.pwdRow}>
               <TextInput
-                style={[ud.input, { flex: 1, color: colors.text, borderColor: colors.background, backgroundColor: colors.background }]}
+                style={[ud.inp, { flex:1, color: colors.text, borderColor: colors.background, backgroundColor: colors.background }]}
                 value={password}
-                onChangeText={t => { setPassword(t); if (t) setClearPwd(false); }}
-                placeholder={clearPwd ? 'Will be cleared' : 'Leave empty to keep current'}
+                onChangeText={v => { setPassword(v); if(v) setClearPwd(false); }}
+                placeholder={clearPwd ? t('willBeCleared') : t('leaveEmptyKeep')}
                 placeholderTextColor={colors.subtext}
-                secureTextEntry={!showPwd}
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!clearPwd}
+                secureTextEntry={!showPwd} autoCapitalize="none" autoCorrect={false} editable={!clearPwd}
               />
-              <TouchableOpacity
-                style={[ud.showBtn, { backgroundColor: colors.background }]}
-                onPress={() => setShowPwd(v => !v)}
-              >
-                <Text style={[ud.showBtnTxt, { color: colors.accent }]}>
-                  {showPwd ? 'Hide' : 'Show'}
-                </Text>
+              <TouchableOpacity style={[ud.showBtn, { backgroundColor: colors.background }]} onPress={() => setShowPwd(v=>!v)}>
+                <Text style={[ud.showT, { color: colors.accent }]}>{showPwd ? t('hide') : t('show')}</Text>
               </TouchableOpacity>
             </View>
             <TouchableOpacity
-              style={[ud.clearPwdRow, { backgroundColor: colors.background, borderColor: clearPwd ? colors.accent : colors.background }]}
-              onPress={() => { setClearPwd(v => !v); if (!clearPwd) setPassword(''); }}
-              activeOpacity={0.7}
+              style={[ud.clearRow, { backgroundColor: colors.background, borderColor: clearPwd ? colors.accent : colors.background }]}
+              onPress={() => { setClearPwd(v=>!v); if(!clearPwd) setPassword(''); }}
             >
-              <View style={[ud.checkbox, {
-                borderColor: clearPwd ? colors.accent : colors.subtext,
-                backgroundColor: clearPwd ? colors.accent : 'transparent',
-              }]}>
-                {clearPwd && <Text style={{ color: colors.background, fontSize: 11, fontWeight: '700' }}>✓</Text>}
+              <View style={[ud.checkbox, { borderColor: clearPwd ? colors.accent : colors.subtext, backgroundColor: clearPwd ? colors.accent : 'transparent' }]}>
+                {clearPwd && <Text style={{ color: colors.background, fontSize:11, fontWeight:'700' }}>✓</Text>}
               </View>
-              <Text style={[ud.clearPwdLabel, { color: clearPwd ? colors.accent : colors.subtext }]}>
-                Set to empty password (no password)
-              </Text>
+              <Text style={[ud.clearL, { color: clearPwd ? colors.accent : colors.subtext }]}>{t('setEmptyPassword')}</Text>
             </TouchableOpacity>
 
             {canChangeRole && (
               <>
-                <Text style={[ud.fieldLabel, { color: colors.subtext }]}>ROLE</Text>
+                <Text style={[ud.fLabel, { color: colors.subtext }]}>{t('role').toUpperCase()}</Text>
                 <View style={ud.roleRow}>
-                  {(['user', 'admin'] as const).map(ro => (
+                  {(['user','admin'] as const).map(ro => (
                     <TouchableOpacity key={ro}
                       style={[ud.roleChip, {
-                        borderColor: role === ro ? colors.accent : colors.background,
-                        backgroundColor: role === ro ? colors.accent + '22' : colors.background,
+                        borderColor: role===ro ? colors.accent : colors.background,
+                        backgroundColor: role===ro ? colors.accent+'22' : colors.background,
                       }]}
                       onPress={() => setRole(ro)}
                     >
-                      <Text style={{
-                        color: role === ro ? colors.accent : colors.subtext,
-                        fontWeight: '600', fontSize: 13,
-                      }}>
+                      <Text style={{ color: role===ro ? colors.accent : colors.subtext, fontWeight:'600', fontSize:13 }}>
                         {roleLabel(ro)}
                       </Text>
                     </TouchableOpacity>
@@ -296,14 +225,11 @@ function UserEditDrawer({ user, currentUser, onClose, onSaved, colors }: {
         </KeyboardAvoidingView>
 
         <View style={[ud.footer, { borderColor: colors.background }]}>
-          <TouchableOpacity style={[ud.btn, { borderColor: colors.subtext + '44' }]} onPress={close}>
-            <Text style={{ color: colors.subtext }}>Cancel</Text>
+          <TouchableOpacity style={[ud.btn, { borderColor: colors.subtext+'44' }]} onPress={close}>
+            <Text style={{ color: colors.subtext }}>{t('cancel')}</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[ud.btn, { backgroundColor: colors.accent, borderColor: colors.accent, flex: 2 }]}
-            onPress={handleSave}
-          >
-            <Text style={{ color: colors.background, fontWeight: '700' }}>Save changes</Text>
+          <TouchableOpacity style={[ud.btn, { backgroundColor: colors.accent, borderColor: colors.accent, flex:2 }]} onPress={handleSave}>
+            <Text style={{ color: colors.background, fontWeight:'700' }}>{t('saveChanges')}</Text>
           </TouchableOpacity>
         </View>
       </Animated.View>
@@ -311,25 +237,25 @@ function UserEditDrawer({ user, currentUser, onClose, onSaved, colors }: {
   );
 }
 const ud = StyleSheet.create({
-  drawer:       { position: 'absolute', bottom: 0, left: 0, right: 0, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '88%' },
-  handle:       { width: 36, height: 3, borderRadius: 2, alignSelf: 'center', marginTop: 12, marginBottom: 8 },
-  header:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 16, borderBottomWidth: 1 },
-  name:         { fontSize: 18, fontWeight: '700' },
-  roleText:     { fontSize: 12, marginTop: 2, fontWeight: '600' },
-  delBtn:       { width: 36, height: 36, justifyContent: 'center', alignItems: 'center', borderRadius: 8, backgroundColor: '#2A1515' },
-  body:         { padding: 20, gap: 4, paddingBottom: 8 },
-  fieldLabel:   { fontSize: 10, fontWeight: '700', letterSpacing: 0.8, marginBottom: 6, marginTop: 12 },
-  input:        { borderRadius: 10, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14 },
-  pwdRow:       { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  showBtn:      { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12 },
-  showBtnTxt:   { fontSize: 13, fontWeight: '600' },
-  clearPwdRow:  { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8, borderRadius: 8, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 10 },
-  checkbox:     { width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center' },
-  clearPwdLabel:{ fontSize: 13, flex: 1 },
-  roleRow:      { flexDirection: 'row', gap: 10, marginBottom: 8 },
-  roleChip:     { flex: 1, borderWidth: 1, borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
-  footer:       { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1 },
-  btn:          { flex: 1, borderWidth: 1, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
+  drawer:   { position:'absolute', bottom:0, left:0, right:0, borderTopLeftRadius:22, borderTopRightRadius:22, maxHeight:'90%' },
+  handle:   { width:36, height:3, borderRadius:2, alignSelf:'center', marginTop:12, marginBottom:8 },
+  head:     { flexDirection:'row', alignItems:'center', paddingHorizontal:20, paddingBottom:16, borderBottomWidth:1 },
+  name:     { fontSize:18, fontWeight:'700' },
+  roleT:    { fontSize:12, marginTop:2, fontWeight:'600' },
+  delBtn:   { width:36, height:36, justifyContent:'center', alignItems:'center', borderRadius:8, backgroundColor:'#2A1515' },
+  body:     { padding:20, gap:4, paddingBottom:20 },
+  fLabel:   { fontSize:10, fontWeight:'700', letterSpacing:0.8, marginBottom:6, marginTop:14 },
+  inp:      { borderRadius:12, borderWidth:1, paddingHorizontal:14, paddingVertical:13, fontSize:15 },
+  pwdRow:   { flexDirection:'row', gap:8, alignItems:'center' },
+  showBtn:  { borderRadius:10, paddingHorizontal:12, paddingVertical:13 },
+  showT:    { fontSize:13, fontWeight:'600' },
+  clearRow: { flexDirection:'row', alignItems:'center', gap:10, marginTop:8, borderRadius:10, borderWidth:1, paddingHorizontal:12, paddingVertical:11 },
+  checkbox: { width:18, height:18, borderRadius:4, borderWidth:1.5, justifyContent:'center', alignItems:'center' },
+  clearL:   { fontSize:13, flex:1 },
+  roleRow:  { flexDirection:'row', gap:10, marginBottom:8 },
+  roleChip: { flex:1, borderWidth:1, borderRadius:10, paddingVertical:12, alignItems:'center' },
+  footer:   { flexDirection:'row', gap:10, padding:16, borderTopWidth:1 },
+  btn:      { flex:1, borderWidth:1, borderRadius:12, paddingVertical:14, alignItems:'center' },
 });
 
 // ─── Guard wrapper ────────────────────────────────────────────────────────────
@@ -337,22 +263,22 @@ export default function Settings() {
   const { userId } = useLocalSearchParams<{ userId: string }>();
   const { colors } = useTheme();
   const user = getUserById(userId);
-
-  if (!user) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background }}>
-        <Text style={{ color: colors.subtext }}>User not found.</Text>
-      </View>
-    );
-  }
+  if (!user) return (
+    <View style={{ flex:1, justifyContent:'center', alignItems:'center', backgroundColor: colors.background }}>
+      <Text style={{ color: colors.subtext }}>User not found.</Text>
+    </View>
+  );
   return <SettingsInner user={user} />;
 }
 
+// ─── Tab types ────────────────────────────────────────────────────────────────
+type Tab = 'appearance' | 'vault' | 'data' | 'accounts' | 'about';
+
 // ─── Inner ────────────────────────────────────────────────────────────────────
 function SettingsInner({ user }: { user: User }) {
-  const router = useRouter();
+  const router  = useRouter();
   const { userId } = useLocalSearchParams<{ userId: string }>();
-  const { t } = useTranslation();
+  const { t }   = useTranslation();
   const {
     colors, slots, activeSlotIdx,
     setColor, applyPreset, applySlot,
@@ -360,58 +286,54 @@ function SettingsInner({ user }: { user: User }) {
   } = useTheme();
 
   const isMasterAdmin = user.role === 'masterAdmin';
-  const isAdmin       = user.role === 'admin' || isMasterAdmin;
-  const iconColor     = contrastColor(colors.background);
+  const [activeTab, setActiveTab] = useState<Tab>('appearance');
 
-  const [allUsers,          setAllUsers]          = useState<User[]>([]);
+  // ── Account card state ────────────────────────────────────────────────────
+  const [accountIcon,       setAccountIconState] = useState(() => getAccountIcon(user.id));
+  const [iconPickerVisible, setIconPickerVisible] = useState(false);
   const [accountDrawerUser, setAccountDrawerUser] = useState<User | null>(null);
   const [accountDrawerOpen, setAccountDrawerOpen] = useState(false);
-  const [slotNameInput,     setSlotNameInput]     = useState('');
-  const [slotSaveIdx,       setSlotSaveIdx]       = useState<number | null>(null);
+
+  // ── Language ──────────────────────────────────────────────────────────────
+  const [currentLang, setCurrentLang] = useState(() => getStoredLanguage() || i18n.language);
+
+  // ── Slot save ─────────────────────────────────────────────────────────────
+  const [slotNameInput, setSlotNameInput] = useState('');
+  const [slotSaveIdx,   setSlotSaveIdx]   = useState<number | null>(null);
+
+  // ── Hidden vault ──────────────────────────────────────────────────────────
   const [hiddenAuthVisible, setHiddenAuthVisible] = useState(false);
   const [hiddenPwd,         setHiddenPwd]         = useState('');
-  const [iconPickerVisible, setIconPickerVisible] = useState(false);
-  // Load icon from persistent storage; '' means no custom icon (use emoji picker)
-  const [accountIcon, setAccountIconState] = useState<string>(() => getAccountIcon(user.id));
-  // Current language
-  const [currentLang, setCurrentLang] = useState<string>(getStoredLanguage);
 
-  // ── Biometric state ───────────────────────────────────────────────────────
-  const [bioSheetVisible,   setBioSheetVisible]   = useState(false);
-  const [bioHardwareAvail,  setBioHardwareAvail]  = useState(false);
-  const [bioType,           setBioType]           = useState<'face' | 'fingerprint' | 'generic'>('generic');
-  // Map of userId → whether biometric is enabled
-  const [bioUserMap,        setBioUserMap]        = useState<Record<string, boolean>>({});
-  // For password confirmation when enabling biometric for an account
-  const [bioPwdTarget,      setBioPwdTarget]      = useState<User | null>(null);
-  const [bioPwdInput,       setBioPwdInput]       = useState('');
-  const [bioPwdVisible,     setBioPwdVisible]     = useState(false);
+  // ── Biometric ─────────────────────────────────────────────────────────────
+  const [bioSheetVisible,  setBioSheetVisible]  = useState(false);
+  const [bioHardwareAvail, setBioHardwareAvail] = useState(false);
+  const [bioType,          setBioType]          = useState<'face'|'fingerprint'|'generic'>('generic');
+  const [bioUserMap,       setBioUserMap]        = useState<Record<string, boolean>>({});
+  const [bioPwdTarget,     setBioPwdTarget]      = useState<User | null>(null);
+  const [bioPwdInput,      setBioPwdInput]       = useState('');
+  const [bioPwdVisible,    setBioPwdVisible]     = useState(false);
 
-  // ── Import / Export state ─────────────────────────────────────────────────
+  // ── Data ──────────────────────────────────────────────────────────────────
   const [transferring, setTransferring] = useState(false);
-
+  const [allUsers,     setAllUsers]     = useState<User[]>([]);
   const reloadUsers = useCallback(() => setAllUsers(getAllUsers()), []);
   useEffect(() => { reloadUsers(); }, [reloadUsers]);
 
-  // Detect biometric hardware
   useEffect(() => {
     (async () => {
       try {
-        const hasHw    = await LocalAuthentication.hasHardwareAsync();
+        const hasHw = await LocalAuthentication.hasHardwareAsync();
         const enrolled = await LocalAuthentication.isEnrolledAsync();
         if (!hasHw || !enrolled) return;
         const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
-        if (types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
-          setBioType('face');
-        } else if (types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) {
-          setBioType('fingerprint');
-        }
+        if (types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) setBioType('face');
+        else if (types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) setBioType('fingerprint');
         setBioHardwareAvail(true);
-      } catch { /* not available */ }
+      } catch {}
     })();
   }, []);
 
-  // Load current biometric state into map whenever sheet opens or users change
   useEffect(() => {
     if (!bioSheetVisible) return;
     const map: Record<string, boolean> = {};
@@ -419,692 +341,571 @@ function SettingsInner({ user }: { user: User }) {
     setBioUserMap(map);
   }, [bioSheetVisible, allUsers]);
 
-  function openAccountDrawer(u: User) {
-    setAccountDrawerUser(u);
-    setAccountDrawerOpen(true);
-  }
-
-  // ── Icon helpers ──────────────────────────────────────────────────────────
+  // ── Handlers ──────────────────────────────────────────────────────────────
   function persistIcon(icon: string) {
-    saveAccountIcon(user.id, icon);
-    setAccountIconState(icon);
-    setIconPickerVisible(false);
+    saveAccountIcon(user.id, icon); setAccountIconState(icon); setIconPickerVisible(false);
   }
 
   async function pickIconFromGallery() {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert(t('chooseFromGallery'), 'Gallery permission is required.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.7,
-    });
-    if (!result.canceled && result.assets[0]?.uri) {
-      persistIcon(result.assets[0].uri);
-    }
+    if (status !== 'granted') { Alert.alert(t('chooseFromGallery'), 'Gallery permission required.'); return; }
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes:['images'], allowsEditing:true, aspect:[1,1], quality:0.7 });
+    if (!result.canceled && result.assets[0]?.uri) persistIcon(result.assets[0].uri);
   }
 
-  // ── Language switch ────────────────────────────────────────────────────────
   function changeLanguage(lang: string) {
-    i18n.changeLanguage(lang);
-    setStoredLanguage(lang);
-    setCurrentLang(lang);
+    i18n.changeLanguage(lang); setStoredLanguage(lang); setCurrentLang(lang);
   }
 
-  // ── Biometric toggle handler ───────────────────────────────────────────────
   function handleBioToggle(targetUser: User, newValue: boolean) {
     if (!newValue) {
-      // Disabling: remove credential + mark disabled
       toggleBiometricForUser(targetUser.id, false);
       deleteBiometricCredential(targetUser.id);
       setBioUserMap(m => ({ ...m, [targetUser.id]: false }));
       return;
     }
-    // Enabling: need password to store as credential
-    // For no-password accounts, credential is empty string
     if (!targetUser.passwordHash) {
       saveBiometricCredential(targetUser.id, '');
       toggleBiometricForUser(targetUser.id, true);
       setBioUserMap(m => ({ ...m, [targetUser.id]: true }));
       return;
     }
-    // Has password — prompt for it
-    setBioPwdTarget(targetUser);
-    setBioPwdInput('');
+    setBioPwdTarget(targetUser); setBioPwdInput('');
   }
 
   function confirmBioPwd() {
     if (!bioPwdTarget) return;
     if (!verifyPassword(bioPwdInput, bioPwdTarget.passwordHash)) {
-      Alert.alert('Wrong password', 'Please enter the correct account password.');
-      return;
+      Alert.alert(t('wrongPassword'), 'Please enter the correct account password.'); return;
     }
     saveBiometricCredential(bioPwdTarget.id, bioPwdInput);
     toggleBiometricForUser(bioPwdTarget.id, true);
     setBioUserMap(m => ({ ...m, [bioPwdTarget!.id]: true }));
-    setBioPwdTarget(null);
-    setBioPwdInput('');
+    setBioPwdTarget(null); setBioPwdInput('');
   }
 
-  // ── Hidden vault ──────────────────────────────────────────────────────────
   function handleHiddenAccess() {
-    if (!user.passwordHash) {
-      router.push({ pathname: '/Home', params: { userId, hiddenMode: '1' } });
-      return;
-    }
+    if (!user.passwordHash) { router.push({ pathname:'/Home', params:{ userId, hiddenMode:'1' } }); return; }
     setHiddenAuthVisible(true);
   }
 
   function confirmHiddenAccess() {
-    if (!verifyPassword(hiddenPwd, user.passwordHash)) {
-      Alert.alert('Wrong password', 'Please try again.');
-      return;
-    }
-    setHiddenAuthVisible(false);
-    setHiddenPwd('');
-    router.push({ pathname: '/Home', params: { userId, hiddenMode: '1' } });
+    if (!verifyPassword(hiddenPwd, user.passwordHash)) { Alert.alert(t('wrongPassword'), t('wrongPasswordMsg')); return; }
+    setHiddenAuthVisible(false); setHiddenPwd('');
+    router.push({ pathname:'/Home', params:{ userId, hiddenMode:'1' } });
   }
 
-  function promptSaveSlot(index: number, e: any) {
-    e?.stopPropagation?.();
-    setSlotSaveIdx(index);
-    setSlotNameInput(slots[index]?.name ?? `Slot ${index + 1}`);
-  }
-
-  // ── Export ────────────────────────────────────────────────────────────────
-  async function handleExport(format: 'csv' | 'excel') {
+  async function handleExport(format: 'csv'|'excel') {
     setTransferring(true);
     try {
       const pwds = getUserById(userId)?.passwords ?? [];
-      if (pwds.length === 0) {
-        Alert.alert('Nothing to export', 'You have no passwords saved yet.');
-        return;
-      }
-      const ok = format === 'csv'
-        ? await exportCsv(pwds)
-        : await exportExcel(pwds);
-      if (!ok) {
-        Alert.alert('Sharing unavailable', 'Your device does not support the share sheet.');
-      }
-    } catch (e: any) {
-      Alert.alert('Export failed', e?.message ?? 'Unknown error.');
-    } finally {
-      setTransferring(false);
-    }
+      if (pwds.length === 0) { Alert.alert(t('nothingToExport'), t('noPasswordsSaved')); return; }
+      const ok = format === 'csv' ? await exportCsv(pwds) : await exportExcel(pwds);
+      if (!ok) Alert.alert(t('sharingUnavailable'), t('sharingUnavailableMsg'));
+    } catch (e: any) { Alert.alert(t('exportFailed'), e?.message ?? ''); }
+    finally { setTransferring(false); }
   }
 
-  // ── Import ────────────────────────────────────────────────────────────────
-  async function handleImport(format: 'csv' | 'excel') {
+  async function handleImport(format: 'csv'|'excel') {
     setTransferring(true);
     try {
-      const result: ImportResult | null = format === 'csv'
-        ? await importCsv()
-        : await importExcel();
-
-      if (!result) return; // user cancelled the picker
-
+      const result: ImportResult | null = format === 'csv' ? await importCsv() : await importExcel();
+      if (!result) return;
       if (result.imported.length === 0) {
-        Alert.alert(
-          'Nothing imported',
-          result.total === 0
-            ? 'The file is empty or has no recognisable header row.'
-            : `All ${result.skipped} row(s) were blank and skipped.`,
-        );
+        Alert.alert(t('nothingImported'), result.total === 0 ? 'File empty or no header row.' : `All ${result.skipped} row(s) were blank.`);
         return;
       }
-
-      Alert.alert(
-        'Confirm import',
-        `Import ${result.imported.length} password(s) into your vault?` +
-          (result.skipped > 0 ? `\n(${result.skipped} blank row(s) will be skipped)` : ''),
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Import',
-            onPress: () => {
-              result.imported.forEach(entry => addPasswordToUser(userId, entry));
-              Alert.alert(
-                'Done',
-                `${result.imported.length} password(s) imported successfully.`,
-              );
-            },
-          },
-        ],
-      );
-    } catch (e: any) {
-      Alert.alert('Import failed', e?.message ?? 'Unknown error.');
-    } finally {
-      setTransferring(false);
-    }
+      Alert.alert(t('confirmImport'), `Import ${result.imported.length} password(s)?` + (result.skipped > 0 ? `\n(${result.skipped} blank row(s) skipped)` : ''), [
+        { text: t('cancel'), style:'cancel' },
+        { text: t('import'), onPress: () => {
+          result.imported.forEach(entry => addPasswordToUser(userId, entry));
+          Alert.alert(t('importSuccess'), `${result.imported.length} password(s) imported.`);
+        }},
+      ]);
+    } catch (e: any) { Alert.alert(t('importFailed'), e?.message ?? ''); }
+    finally { setTransferring(false); }
   }
 
-  // ── Preset chip size: 3 per row with gap ──────────────────────────────────
-  const cardPadding = 16;
-  const chipGap     = 8;
-  const chipsPerRow = 3;
-  const cardWidth   = SCREEN_W - 40 - 2;
-  const chipWidth   = (cardWidth - cardPadding * 2 - chipGap * (chipsPerRow - 1)) / chipsPerRow;
+  // ── Preset chip sizing ────────────────────────────────────────────────────
+  const chipW = (SCREEN_W - 40 - 32 - 8*3) / 4;
+  const darkPresets  = PRESET_THEMES.filter(p => isDark(p.colors.background));
+  const lightPresets = PRESET_THEMES.filter(p => !isDark(p.colors.background));
 
-  return (
-    <View style={[s.root, { backgroundColor: colors.background }]}>
+  // ── Tab content renderers ─────────────────────────────────────────────────
+  function renderAppearance() {
+    return (
+      <ScrollView contentContainerStyle={pg.scroll} showsVerticalScrollIndicator={false}>
 
-      {/* ── Header ── */}
-      <View style={[s.header, { borderColor: colors.card }]}>
-        <TouchableOpacity style={[s.headerBtn, { backgroundColor: colors.card }]} onPress={() => router.back()}>
-          <Text style={[s.headerBtnTxt, { color: colors.text }]}>{I_BACK}</Text>
-        </TouchableOpacity>
-        <Text style={[s.headerTitle, { color: colors.text }]}>{t('settings')}</Text>
-        <View style={s.headerBtn} />
-      </View>
-
-      <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
-
-        {/* ── ACCOUNT CARD ── */}
+        {/* Account card */}
         <TouchableOpacity
           activeOpacity={0.8}
-          onPress={() => openAccountDrawer(user)}
-          style={[s.accountCard, { backgroundColor: colors.card }]}
+          onPress={() => { setAccountDrawerUser(user); setAccountDrawerOpen(true); }}
+          style={[pg.accountCard, { backgroundColor: colors.card }]}
         >
-          {/* Icon — tap only the icon to change it */}
           <TouchableOpacity
             onPress={e => { e.stopPropagation(); setIconPickerVisible(true); }}
-            activeOpacity={0.7}
-            style={[s.accountIconWrap, { backgroundColor: colors.accent + '22', borderColor: colors.accent + '55' }]}
+            style={[pg.iconWrap, { backgroundColor: colors.accent+'22', borderColor: colors.accent+'55' }]}
           >
-            {accountIcon.startsWith('/') || accountIcon.startsWith('file:') || accountIcon.startsWith('content:') || accountIcon.startsWith('ph://') || accountIcon.startsWith('asset-library:') ? (
-              <Image
-                source={{ uri: accountIcon }}
-                style={s.accountIconImage}
-                contentFit="cover"
-              />
+            {isUri(accountIcon) ? (
+              <Image source={{ uri: accountIcon }} style={pg.iconImg} contentFit="cover" />
             ) : (
-              <Text style={s.accountIconEmoji}>{accountIcon || '👤'}</Text>
+              <Text style={pg.iconEmoji}>{accountIcon || '👤'}</Text>
             )}
           </TouchableOpacity>
-
-          <View style={{ flex: 1 }}>
-            <Text style={[s.accountName, { color: colors.text }]}>{user.username}</Text>
-            <Text style={[s.accountMeta, { color: colors.subtext }]}>
-              {roleLabel(user.role)}  ·  {t('joined')} {new Date(user.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
+          <View style={{ flex:1 }}>
+            <Text style={[pg.accountName, { color: colors.text }]}>{user.username}</Text>
+            <Text style={[pg.accountMeta, { color: colors.subtext }]}>
+              {roleLabel(user.role)}  ·  {t('joined')} {new Date(user.createdAt).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}
             </Text>
           </View>
-
-          <Text style={[{ fontSize: 18, color: colors.subtext }]}>{I_EDIT}</Text>
+          <Text style={{ fontSize:16, color: colors.subtext }}>✏</Text>
         </TouchableOpacity>
 
-        {/* ── APPEARANCE ── */}
-        <Section title={t('appearance')} colors={colors}>
+        {/* Custom colors */}
+        <SL label={t('customColors')} color={colors.accent} />
+        <View style={[pg.card, { backgroundColor: colors.card }]}>
+          <ColorPickerModal label={t('accent')}     currentColor={colors.accent}     onSelect={v=>setColor('accent',v)}     labelColor={colors.accent}  containerColor={colors.card} />
+          <ColorPickerModal label={t('background')} currentColor={colors.background} onSelect={v=>setColor('background',v)} labelColor={colors.text}    containerColor={colors.card} />
+          <ColorPickerModal label={t('card')}       currentColor={colors.card}       onSelect={v=>setColor('card',v)}       labelColor={colors.text}    containerColor={colors.card} />
+          <ColorPickerModal label={t('text')}       currentColor={colors.text}       onSelect={v=>setColor('text',v)}       labelColor={colors.text}    containerColor={colors.card} />
+          <ColorPickerModal label={t('subtext')}    currentColor={colors.subtext}    onSelect={v=>setColor('subtext',v)}    labelColor={colors.subtext} containerColor={colors.card} />
+          <TouchableOpacity style={[pg.resetBtn, { borderColor: colors.subtext+'88' }]} onPress={resetToDefault}>
+            <Text style={{ color: colors.subtext, fontSize:13 }}>↺  {t('resetToDefault')}</Text>
+          </TouchableOpacity>
+        </View>
 
-          <View style={[s.card, { backgroundColor: colors.card }]}>
-            <Text style={[s.cardLabel, { color: colors.subtext }]}>{t('customColors')}</Text>
-            <ColorPickerModal label="Accent"     currentColor={colors.accent}     onSelect={v => setColor('accent', v)}     labelColor={colors.accent}  containerColor={colors.card} />
-            <ColorPickerModal label="Background" currentColor={colors.background} onSelect={v => setColor('background', v)} labelColor={colors.text}    containerColor={colors.card} />
-            <ColorPickerModal label="Card"       currentColor={colors.card}       onSelect={v => setColor('card', v)}       labelColor={colors.text}    containerColor={colors.card} />
-            <ColorPickerModal label="Text"       currentColor={colors.text}       onSelect={v => setColor('text', v)}       labelColor={colors.text}    containerColor={colors.card} />
-            <ColorPickerModal label="Subtext"    currentColor={colors.subtext}    onSelect={v => setColor('subtext', v)}    labelColor={colors.subtext} containerColor={colors.card} />
-            <TouchableOpacity style={[s.resetBtn, { borderColor: colors.subtext }]} onPress={resetToDefault}>
-              <Text style={{ color: colors.subtext, fontSize: 12 }}>Reset to default</Text>
-            </TouchableOpacity>
+        {/* OLED Black */}
+        <SL label={t('oledBlack')} color={colors.accent} />
+        <TouchableOpacity
+          style={[pg.oledBtn, { backgroundColor: colors.card, borderColor: colors.accent+'44' }]}
+          onPress={() => applyPreset({ name:'OLED', colors: OLED_THEME })}
+          activeOpacity={0.8}
+        >
+          <View style={[pg.oledDot, { backgroundColor: '#000000', borderColor: '#555' }]} />
+          <View style={{ flex:1 }}>
+            <Text style={[pg.oledLabel, { color: colors.text }]}>{t('oledBlack')}</Text>
+            <Text style={[pg.oledSub, { color: colors.subtext }]}>{t('oledBlackSub')}</Text>
           </View>
+          <View style={[pg.oledPreview, { backgroundColor:'#000000', borderColor:'#333' }]}>
+            <View style={[pg.oledPreviewAccent, { backgroundColor:'#C8A97E' }]} />
+          </View>
+        </TouchableOpacity>
 
-          <View style={[s.card, { backgroundColor: colors.card }]}>
-            <Text style={[s.cardLabel, { color: colors.subtext }]}>{t('presetThemes')}</Text>
-            <View style={s.presetGrid}>
-              {PRESET_THEMES.map(preset => (
+        {/* Preset themes — dark row */}
+        <SL label={t('darkThemes')} color={colors.accent} />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={pg.presetRow}>
+          {darkPresets.map(preset => (
+            <TouchableOpacity
+              key={preset.name}
+              style={[pg.presetChip, { width: chipW+16, backgroundColor: preset.colors.card, borderColor: preset.colors.accent }]}
+              onPress={() => applyPreset(preset)}
+            >
+              <View style={[pg.presetDot, { backgroundColor: preset.colors.accent }]} />
+              <Text style={[pg.presetName, { color: preset.colors.text }]} numberOfLines={1}>{preset.name}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        {/* Preset themes — light row */}
+        <SL label={t('lightThemes')} color={colors.accent} />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={pg.presetRow}>
+          {lightPresets.map(preset => (
+            <TouchableOpacity
+              key={preset.name}
+              style={[pg.presetChip, { width: chipW+16, backgroundColor: preset.colors.card, borderColor: preset.colors.accent }]}
+              onPress={() => applyPreset(preset)}
+            >
+              <View style={[pg.presetDot, { backgroundColor: preset.colors.accent }]} />
+              <Text style={[pg.presetName, { color: preset.colors.text }]} numberOfLines={1}>{preset.name}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        {/* Saved slots */}
+        <SL label={t('savedSlots')} color={colors.accent} />
+        <View style={[pg.card, { backgroundColor: colors.card }]}>
+          {Array.from({ length:5 }).map((_,i) => {
+            const slot = slots[i];
+            const isActive = activeSlotIdx === i;
+            return (
+              <TouchableOpacity
+                key={i}
+                style={[pg.slotRow, { borderColor: isActive ? colors.accent : colors.background, backgroundColor: isActive ? colors.accent+'0D' : colors.background }]}
+                onPress={() => slot && applySlot(i)}
+                activeOpacity={slot ? 0.7 : 1}
+              >
+                <View style={[pg.slotDot, { backgroundColor: slot?.colors.accent ?? colors.subtext+'44' }]} />
+                <View style={{ flex:1 }}>
+                  <Text style={[pg.slotName, { color: slot ? colors.text : colors.subtext }]} numberOfLines={1}>
+                    {slot?.name ?? t('empty')}
+                  </Text>
+                  {isActive && <Text style={[pg.slotActive, { color: colors.accent }]}>{t('active')}</Text>}
+                </View>
+                <View style={{ flexDirection:'row', gap:18 }}>
+                  <TouchableOpacity hitSlop={{ top:8,bottom:8,left:8,right:8 }} onPress={e => { e.stopPropagation(); setSlotSaveIdx(i); setSlotNameInput(slot?.name ?? `Slot ${i+1}`); }}>
+                    <Text style={{ fontSize:16, color: colors.subtext }}>{slot ? '✏' : '+'}</Text>
+                  </TouchableOpacity>
+                  {slot && (
+                    <TouchableOpacity hitSlop={{ top:8,bottom:8,left:8,right:8 }} onPress={e => { e.stopPropagation(); Alert.alert(t('deleteSlot'), t('deleteSlotMsg'), [{ text:t('cancel'), style:'cancel' },{ text:t('delete'), style:'destructive', onPress:()=>deleteSlot(i) }]); }}>
+                      <Text style={{ fontSize:16, color:'#C84F4F' }}>🗑</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/* Language */}
+        <SL label={t('language')} color={colors.accent} />
+        <View style={[pg.card, { backgroundColor: colors.card }]}>
+          <View style={{ flexDirection:'row', alignItems:'center' }}>
+            <View style={{ flex:1 }}>
+              <Text style={[row.label, { color: colors.text }]}>{t('language')}</Text>
+              <Text style={[row.sub, { color: colors.subtext }]}>{t('languageSub')}</Text>
+            </View>
+            <View style={pg.langRow}>
+              {(['it','en'] as const).map(lang => (
                 <TouchableOpacity
-                  key={preset.name}
-                  style={[s.presetChip, {
-                    width: chipWidth,
-                    backgroundColor: preset.colors.card,
-                    borderColor: preset.colors.accent,
-                  }]}
-                  onPress={() => applyPreset(preset)}
-                  activeOpacity={0.8}
+                  key={lang}
+                  style={[pg.langBtn, { backgroundColor: currentLang === lang ? colors.accent : colors.background }]}
+                  onPress={() => changeLanguage(lang)}
                 >
-                  <View style={[s.presetDot, { backgroundColor: preset.colors.accent }]} />
-                  <Text style={[s.presetName, { color: preset.colors.text }]} numberOfLines={1}>
-                    {preset.name}
+                  <Text style={[pg.langBtnTxt, { color: currentLang === lang ? colors.background : colors.subtext }]}>
+                    {lang === 'it' ? 'ITA' : 'ENG'}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
           </View>
+        </View>
 
-          <View style={[s.card, { backgroundColor: colors.card }]}>
-            <Text style={[s.cardLabel, { color: colors.subtext }]}>{t('savedSlots')}</Text>
-            <View style={s.slotsGrid}>
-              {Array.from({ length: 5 }).map((_, i) => {
-                const slot     = slots[i];
-                const isActive = activeSlotIdx === i;
-                return (
-                  <TouchableOpacity
-                    key={i}
-                    style={[s.slotCard, {
-                      backgroundColor: colors.background,
-                      borderColor: isActive ? colors.accent : colors.card,
-                      ...(isActive && { backgroundColor: colors.accent + '0D' }),
-                    }]}
-                    onPress={() => slot && applySlot(i)}
-                    activeOpacity={slot ? 0.7 : 1}
-                  >
-                    <View style={[s.slotDot, { backgroundColor: slot?.colors.accent ?? colors.subtext + '44' }]} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={[s.slotName, { color: slot ? colors.text : colors.subtext }]} numberOfLines={1}>
-                        {slot?.name ?? t('empty')}
-                      </Text>
-                      {isActive && (
-                        <Text style={[s.slotActive, { color: colors.accent }]}>Active</Text>
-                      )}
-                    </View>
-                    <View style={s.slotBtns}>
-                      <TouchableOpacity
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        onPress={e => promptSaveSlot(i, e)}
-                      >
-                        <Text style={[s.slotAction, { color: colors.subtext }]}>
-                          {slot ? I_EDIT : '+'}
-                        </Text>
-                      </TouchableOpacity>
-                      {slot && (
-                        <TouchableOpacity
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                          onPress={e => {
-                            e?.stopPropagation?.();
-                            Alert.alert('Delete slot', `Delete "${slot.name}"?`, [
-                              { text: 'Cancel', style: 'cancel' },
-                              { text: 'Delete', style: 'destructive', onPress: () => deleteSlot(i) },
-                            ]);
-                          }}
-                        >
-                          <Text style={[s.slotAction, { color: '#8B3030' }]}>{I_TRASH}</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        </Section>
+      </ScrollView>
+    );
+  }
 
-        {/* ── VAULT ── */}
-        <Section title={t('vault')} colors={colors}>
-          <Row label={t('hiddenPasswords')} sub={t('hiddenPasswordsSub')}
-            onPress={handleHiddenAccess} colors={colors}
-            right={<Text style={{ fontSize: 18, color: iconColor }}>{I_EYE}</Text>} />
-        </Section>
+  function renderVault() {
+    return (
+      <ScrollView contentContainerStyle={pg.scroll} showsVerticalScrollIndicator={false}>
+        <SL label={t('vault')} color={colors.accent} />
+        <Row label={t('hiddenPasswords')} sub={t('hiddenPasswordsSub')} onPress={handleHiddenAccess} colors={colors}
+          right={<Text style={{ fontSize:20, color: contrast(colors.card) }}>👁</Text>} />
 
-        {/* ── BIOMETRIC ACCESS ── (MasterAdmin only) */}
         {isMasterAdmin && (
-          <Section title={t('biometricAccess')} colors={colors}>
+          <>
+            <SL label={t('biometricAccess')} color={colors.accent} />
             {!bioHardwareAvail ? (
-              <View style={[r.wrap, { backgroundColor: colors.card }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[r.label, { color: colors.subtext }]}>{t('biometricNotAvail')}</Text>
-                  <Text style={[r.sub, { color: colors.subtext }]}>{t('biometricNotAvailSub')}</Text>
+              <View style={[row.wrap, { backgroundColor: colors.card }]}>
+                <View style={{ flex:1 }}>
+                  <Text style={[row.label, { color: colors.subtext }]}>{t('biometricNotAvail')}</Text>
+                  <Text style={[row.sub, { color: colors.subtext }]}>{t('biometricNotAvailSub')}</Text>
                 </View>
               </View>
             ) : (
               <Row
-                label={
-                  bioType === 'face'        ? t('faceIdAccess')        :
-                  bioType === 'fingerprint' ? t('fingerprintAccess')   :
-                                              t('biometricUnlock')
-                }
-                sub={t('biometricSub')}
-                onPress={() => setBioSheetVisible(true)}
-                colors={colors}
-                right={
-                  <View style={bio.iconWrap}>
-                    <Text style={bio.iconTxt}>
-                      {bioType === 'face' ? '🪪' : bioType === 'fingerprint' ? '☝' : '🔓'}
-                    </Text>
-                  </View>
-                }
+                label={bioType==='face' ? t('faceIdAccess') : bioType==='fingerprint' ? t('fingerprintAccess') : t('biometricUnlock')}
+                sub={t('biometricSub')} onPress={() => setBioSheetVisible(true)} colors={colors}
+                right={<Text style={{ fontSize:22 }}>{bioType==='face' ? '🪪' : bioType==='fingerprint' ? '☝' : '🔓'}</Text>}
               />
             )}
-          </Section>
+          </>
         )}
-
-        {/* ── DATA ── */}
-        <Section title={t('data')} colors={colors}>
-
-          <Text style={[s.subSection, { color: colors.subtext }]}>{t('import')}</Text>
-          <Text style={[s.dataHint, { color: colors.subtext }]}>{t('importHint')}</Text>
-          <View style={s.dataRow}>
-            <TouchableOpacity
-              style={[s.dataBtn, { backgroundColor: colors.card, opacity: transferring ? 0.45 : 1 }]}
-              disabled={transferring}
-              onPress={() => handleImport('csv')}
-            >
-              <Text style={{ fontSize: 20, color: contrastColor(colors.card) }}>{I_IMPORT}</Text>
-              <Text style={[s.dataBtnTxt, { color: colors.text }]}>CSV</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[s.dataBtn, { backgroundColor: colors.card, opacity: transferring ? 0.45 : 1 }]}
-              disabled={transferring}
-              onPress={() => handleImport('excel')}
-            >
-              <Text style={{ fontSize: 20, color: contrastColor(colors.card) }}>{I_IMPORT}</Text>
-              <Text style={[s.dataBtnTxt, { color: colors.text }]}>Excel</Text>
-            </TouchableOpacity>
-          </View>
-
-          <Text style={[s.subSection, { color: colors.subtext, marginTop: 16 }]}>{t('export')}</Text>
-          <View style={s.dataRow}>
-            <TouchableOpacity
-              style={[s.dataBtn, { backgroundColor: colors.card, opacity: transferring ? 0.45 : 1 }]}
-              disabled={transferring}
-              onPress={() => handleExport('csv')}
-            >
-              <Text style={{ fontSize: 20, color: contrastColor(colors.card) }}>{I_EXPORT}</Text>
-              <Text style={[s.dataBtnTxt, { color: colors.text }]}>CSV</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[s.dataBtn, { backgroundColor: colors.card, opacity: transferring ? 0.45 : 1 }]}
-              disabled={transferring}
-              onPress={() => handleExport('excel')}
-            >
-              <Text style={{ fontSize: 20, color: contrastColor(colors.card) }}>{I_EXPORT}</Text>
-              <Text style={[s.dataBtnTxt, { color: colors.text }]}>Excel</Text>
-            </TouchableOpacity>
-          </View>
-
-          {transferring && (
-            <ActivityIndicator size="small" color={colors.accent} style={{ marginTop: 10 }} />
-          )}
-        </Section>
-
-        {/* ── ACCOUNT MANAGER ── */}
-        <Section title={t('accountManager')} colors={colors}>
-          {allUsers.map(u => {
-            const isSelf  = u.id === userId;
-            if (isSelf) return null; // current user is shown in the top account card
-
-            const canSee  = isMasterAdmin || u.role !== 'masterAdmin';
-            const canEdit = (isMasterAdmin && u.role !== 'masterAdmin')
-              || (isAdmin && u.role === 'user');
-
-            if (!canSee) return null;
-
-            return (
-              <TouchableOpacity
-                key={u.id}
-                style={[s.userRow, { backgroundColor: colors.card }]}
-                onPress={() => { if (canEdit) openAccountDrawer(u); }}
-                activeOpacity={canEdit ? 0.7 : 1}
-              >
-                <View style={[s.userAvatar, {
-                  borderColor: roleColor(u.role, colors.accent),
-                  backgroundColor: colors.background,
-                }]}>
-                  <Text style={[s.userAvatarTxt, { color: roleColor(u.role, colors.accent) }]}>
-                    {u.username.charAt(0).toUpperCase()}
-                  </Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.userName, { color: colors.text }]}>{u.username}</Text>
-                  <Text style={[s.userRole, { color: roleColor(u.role, colors.accent) }]}>
-                    {roleLabel(u.role)}
-                  </Text>
-                </View>
-                {canEdit && (
-                  <Text style={{ color: contrastColor(colors.card), fontSize: 16 }}>{I_EDIT}</Text>
-                )}
-              </TouchableOpacity>
-            );
-          })}
-        </Section>
-
-        {/* ── STATS ── */}
-        <Section title={t('statistics')} colors={colors}>
-          <Row label={t('viewStats')} sub={t('viewStatsSub')}
-            onPress={() => router.push({ pathname: '/stats', params: { userId } })}
-            colors={colors}
-            right={<Text style={{ fontSize: 20, color: contrastColor(colors.card) }}>{I_STATS}</Text>} />
-        </Section>
-
-        {/* ── LANGUAGE ── */}
-        <Section title={t('language')} colors={colors}>
-          <View style={[r.wrap, { backgroundColor: colors.card }]}>
-            <View style={{ flex: 1 }}>
-              <Text style={[r.label, { color: colors.text }]}>{t('language')}</Text>
-              <Text style={[r.sub, { color: colors.subtext }]}>{t('languageSub')}</Text>
-            </View>
-            <View style={s.langRow}>
-              <TouchableOpacity
-                style={[s.langBtn, { backgroundColor: currentLang === 'it' ? colors.accent : colors.background }]}
-                onPress={() => changeLanguage('it')}
-              >
-                <Text style={[s.langBtnTxt, { color: currentLang === 'it' ? colors.background : colors.subtext }]}>ITA</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[s.langBtn, { backgroundColor: currentLang === 'en' ? colors.accent : colors.background }]}
-                onPress={() => changeLanguage('en')}
-              >
-                <Text style={[s.langBtnTxt, { color: currentLang === 'en' ? colors.background : colors.subtext }]}>ENG</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Section>
-
       </ScrollView>
+    );
+  }
 
-      {/* ── Slot save sheet ── */}
+  function renderData() {
+    return (
+      <ScrollView contentContainerStyle={pg.scroll} showsVerticalScrollIndicator={false}>
+        <SL label={t('import')} color={colors.accent} />
+        <Text style={[pg.hint, { color: colors.subtext }]}>{t('importHint')}</Text>
+        <View style={pg.dataRow}>
+          {(['csv','excel'] as const).map(fmt => (
+            <TouchableOpacity key={fmt}
+              style={[pg.dataBtn, { backgroundColor: colors.card, opacity: transferring ? 0.4 : 1 }]}
+              disabled={transferring} onPress={() => handleImport(fmt)}
+            >
+              <Text style={{ fontSize:22 }}>↓</Text>
+              <Text style={[pg.dataBtnTxt, { color: colors.text }]}>{fmt.toUpperCase()}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <SL label={t('export')} color={colors.accent} />
+        <View style={pg.dataRow}>
+          {(['csv','excel'] as const).map(fmt => (
+            <TouchableOpacity key={fmt}
+              style={[pg.dataBtn, { backgroundColor: colors.card, opacity: transferring ? 0.4 : 1 }]}
+              disabled={transferring} onPress={() => handleExport(fmt)}
+            >
+              <Text style={{ fontSize:22 }}>↑</Text>
+              <Text style={[pg.dataBtnTxt, { color: colors.text }]}>{fmt.toUpperCase()}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </ScrollView>
+    );
+  }
+
+  function renderAccounts() {
+    return (
+      <ScrollView contentContainerStyle={pg.scroll} showsVerticalScrollIndicator={false}>
+        <SL label={t('accountManager')} color={colors.accent} />
+        {allUsers.map(u => {
+          const isSelf  = u.id === userId;
+          if (isSelf) return null;
+          const canSee  = isMasterAdmin || u.role !== 'masterAdmin';
+          const canEdit = (isMasterAdmin && u.role !== 'masterAdmin') || (user.role === 'admin' && u.role === 'user');
+          if (!canSee) return null;
+          return (
+            <TouchableOpacity key={u.id}
+              style={[pg.userRow, { backgroundColor: colors.card }]}
+              onPress={() => { if(canEdit){ setAccountDrawerUser(u); setAccountDrawerOpen(true); } }}
+              activeOpacity={canEdit ? 0.7 : 1}
+            >
+              <View style={[pg.userAvatar, { borderColor: roleColor(u.role, colors.accent), backgroundColor: colors.background }]}>
+                <Text style={[pg.userAvatarTxt, { color: roleColor(u.role, colors.accent) }]}>
+                  {u.username.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+              <View style={{ flex:1 }}>
+                <Text style={[pg.userName, { color: colors.text }]}>{u.username}</Text>
+                <Text style={[pg.userRole, { color: roleColor(u.role, colors.accent) }]}>{roleLabel(u.role)}</Text>
+              </View>
+              {canEdit && <Text style={{ color: colors.subtext, fontSize:18 }}>✏</Text>}
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+    );
+  }
+
+  function renderAbout() {
+    return (
+      <ScrollView contentContainerStyle={pg.scroll} showsVerticalScrollIndicator={false}>
+        <SL label={t('statistics')} color={colors.accent} />
+        <Row label={t('viewStats')} sub={t('viewStatsSub')}
+          onPress={() => router.push({ pathname:'/stats', params:{ userId } })}
+          colors={colors} right={<Text style={{ fontSize:22 }}>◈</Text>} />
+
+        <SL label={t('bugReport')} color={colors.accent} />
+        <TouchableOpacity
+          style={[pg.feedbackCard, { backgroundColor: colors.card, borderColor: colors.accent+'33' }]}
+          onPress={() => Linking.openURL(FEEDBACK_URL)}
+          activeOpacity={0.8}
+        >
+          <Text style={pg.feedbackIcon}>📝</Text>
+          <View style={{ flex:1 }}>
+            <Text style={[pg.feedbackLabel, { color: colors.text }]}>{t('bugReport')}</Text>
+            <Text style={[pg.feedbackSub, { color: colors.subtext }]}>{t('bugReportSub')}</Text>
+          </View>
+          <Text style={{ color: colors.subtext, fontSize:18 }}>›</Text>
+        </TouchableOpacity>
+
+        <SL label={t('aboutApp')} color={colors.accent} />
+        <View style={[pg.card, { backgroundColor: colors.card, gap:0 }]}>
+          <View style={pg.aboutRow}>
+            <Text style={[pg.aboutKey, { color: colors.subtext }]}>{t('aboutVersion')}</Text>
+            <Text style={[pg.aboutVal, { color: colors.text }]}>1.0.0</Text>
+          </View>
+          <View style={[pg.aboutRow, { borderTopWidth:1, borderTopColor: colors.background }]}>
+            <Text style={[pg.aboutKey, { color: colors.subtext }]}>Developer</Text>
+            <Text style={[pg.aboutVal, { color: colors.text }]}>tr3rr0r</Text>
+          </View>
+        </View>
+      </ScrollView>
+    );
+  }
+
+  // ── Tab definitions ───────────────────────────────────────────────────────
+  const TABS: { key: Tab; icon: string; label: string }[] = [
+    { key:'appearance', icon:'🎨', label: t('tabAppearance') },
+    { key:'vault',      icon:'🔐', label: t('tabVault')      },
+    { key:'data',       icon:'↕',  label: t('tabData')       },
+    { key:'accounts',   icon:'👥', label: t('tabAccounts')   },
+    { key:'about',      icon:'◈',  label: t('tabAbout')      },
+  ];
+
+  return (
+    <View style={[pg.root, { backgroundColor: colors.background }]}>
+
+      {/* ── Header ── */}
+      <View style={[pg.header, { borderColor: colors.card }]}>
+        <TouchableOpacity style={[pg.backBtn, { backgroundColor: colors.card }]} onPress={() => router.back()}>
+          <Text style={[pg.backTxt, { color: colors.text }]}>←</Text>
+        </TouchableOpacity>
+        <Text style={[pg.headerTitle, { color: colors.text }]}>{t('settings')}</Text>
+        <View style={pg.backBtn} />
+      </View>
+
+      {/* ── Tab bar ── */}
+      <View style={[pg.tabBar, { backgroundColor: colors.card, borderColor: colors.background }]}>
+        {TABS.map(tab => {
+          const active = activeTab === tab.key;
+          return (
+            <TouchableOpacity
+              key={tab.key}
+              style={[pg.tab, active && { backgroundColor: colors.accent+'22', borderRadius:12 }]}
+              onPress={() => setActiveTab(tab.key)}
+              activeOpacity={0.7}
+            >
+              <Text style={[pg.tabIcon, { opacity: active ? 1 : 0.45 }]}>{tab.icon}</Text>
+              <Text style={[pg.tabLabel, { color: active ? colors.accent : colors.subtext, fontWeight: active ? '700' : '500' }]}>
+                {tab.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* ── Content ── */}
+      <View style={{ flex:1 }}>
+        {activeTab === 'appearance' && renderAppearance()}
+        {activeTab === 'vault'      && renderVault()}
+        {activeTab === 'data'       && renderData()}
+        {activeTab === 'accounts'   && renderAccounts()}
+        {activeTab === 'about'      && renderAbout()}
+      </View>
+
+      {/* ── Modals ── */}
+
+      {/* Slot save */}
       <Modal visible={slotSaveIdx !== null} transparent animationType="fade">
         <Pressable style={bs.backdrop} onPress={() => setSlotSaveIdx(null)} />
         <View style={[bs.card, { backgroundColor: colors.card }]}>
-          <Text style={[bs.title, { color: colors.text }]}>
-            {slots[slotSaveIdx ?? 0] ? 'Update slot' : 'Save current theme'}
-          </Text>
+          <Text style={[bs.title, { color: colors.text }]}>{slots[slotSaveIdx??0] ? t('updateSlot') : t('saveCurrentTheme')}</Text>
           <TextInput
             style={[bs.input, { color: colors.text, borderColor: colors.accent, backgroundColor: colors.background }]}
-            value={slotNameInput}
-            onChangeText={setSlotNameInput}
-            placeholder="Slot name"
-            placeholderTextColor={colors.subtext}
-            autoFocus
+            value={slotNameInput} onChangeText={setSlotNameInput}
+            placeholder={t('slotName')} placeholderTextColor={colors.subtext} autoFocus
           />
           <View style={bs.btnRow}>
             <TouchableOpacity style={[bs.btn, { borderColor: colors.subtext }]} onPress={() => setSlotSaveIdx(null)}>
-              <Text style={{ color: colors.subtext }}>Cancel</Text>
+              <Text style={{ color: colors.subtext }}>{t('cancel')}</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[bs.btn, { backgroundColor: colors.accent, borderColor: colors.accent }]}
-              onPress={() => {
-                if (slotSaveIdx !== null) {
-                  saveToSlot(slotSaveIdx, slotNameInput || `Slot ${slotSaveIdx + 1}`);
-                  setSlotSaveIdx(null);
-                }
-              }}
-            >
-              <Text style={{ color: colors.background, fontWeight: '700' }}>Save</Text>
+            <TouchableOpacity style={[bs.btn, { backgroundColor: colors.accent, borderColor: colors.accent }]}
+              onPress={() => { if(slotSaveIdx!==null){ saveToSlot(slotSaveIdx, slotNameInput||`Slot ${slotSaveIdx+1}`); setSlotSaveIdx(null); } }}>
+              <Text style={{ color: colors.background, fontWeight:'700' }}>{t('save')}</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      {/* ── Hidden vault auth sheet ── */}
+      {/* Hidden vault auth */}
       <Modal visible={hiddenAuthVisible} transparent animationType="fade">
         <Pressable style={bs.backdrop} onPress={() => { setHiddenAuthVisible(false); setHiddenPwd(''); }} />
         <View style={[bs.card, { backgroundColor: colors.card }]}>
-          <Text style={[bs.title, { color: colors.text }]}>{I_LOCK}  Hidden vault</Text>
-          <Text style={{ color: colors.subtext, fontSize: 13 }}>Enter your password to access hidden passwords.</Text>
+          <Text style={[bs.title, { color: colors.text }]}>{t('hiddenVault')}</Text>
+          <Text style={{ color: colors.subtext, fontSize:13 }}>{t('hiddenVaultPrompt')}</Text>
           <TextInput
             style={[bs.input, { color: colors.text, borderColor: colors.accent, backgroundColor: colors.background }]}
-            value={hiddenPwd}
-            onChangeText={setHiddenPwd}
-            placeholder="Your password"
-            placeholderTextColor={colors.subtext}
-            secureTextEntry autoFocus
-            onSubmitEditing={confirmHiddenAccess}
+            value={hiddenPwd} onChangeText={setHiddenPwd}
+            placeholder={t('yourPassword')} placeholderTextColor={colors.subtext}
+            secureTextEntry autoFocus onSubmitEditing={confirmHiddenAccess}
           />
           <View style={bs.btnRow}>
             <TouchableOpacity style={[bs.btn, { borderColor: colors.subtext }]} onPress={() => { setHiddenAuthVisible(false); setHiddenPwd(''); }}>
-              <Text style={{ color: colors.subtext }}>Cancel</Text>
+              <Text style={{ color: colors.subtext }}>{t('cancel')}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[bs.btn, { backgroundColor: colors.accent, borderColor: colors.accent }]} onPress={confirmHiddenAccess}>
-              <Text style={{ color: colors.background, fontWeight: '700' }}>Unlock</Text>
+              <Text style={{ color: colors.background, fontWeight:'700' }}>{t('unlock')}</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      {/* ── Icon picker modal ── */}
+      {/* Icon picker */}
       <Modal visible={iconPickerVisible} transparent animationType="fade">
         <Pressable style={bs.backdrop} onPress={() => setIconPickerVisible(false)} />
         <View style={[bs.card, { backgroundColor: colors.card }]}>
           <Text style={[bs.title, { color: colors.text }]}>{t('chooseIcon')}</Text>
-
-          {/* Gallery button */}
-          <TouchableOpacity
-            style={[s.galleryBtn, { backgroundColor: colors.accent + '18', borderColor: colors.accent + '44' }]}
-            onPress={pickIconFromGallery}
-            activeOpacity={0.8}
-          >
-            <Text style={s.galleryBtnIcon}>🖼</Text>
-            <Text style={[s.galleryBtnTxt, { color: colors.accent }]}>{t('chooseFromGallery')}</Text>
+          <TouchableOpacity style={[pg.galleryBtn, { backgroundColor: colors.accent+'18', borderColor: colors.accent+'44' }]} onPress={pickIconFromGallery}>
+            <Text>🖼</Text>
+            <Text style={[pg.galleryTxt, { color: colors.accent }]}>{t('chooseFromGallery')}</Text>
           </TouchableOpacity>
-
-          {/* Emoji grid */}
-          <View style={s.iconGrid}>
+          <View style={pg.emojiGrid}>
             {['👤','🔐','🛡','⚡','🌟','🎯','🦁','🐺','🦊','🐻','🌙','☀️','🌈','💎','🔥','❄️','🎮','🚀','🎵','🌿'].map(em => (
-              <TouchableOpacity
-                key={em}
-                style={[s.iconOption, accountIcon === em && { backgroundColor: colors.accent + '33', borderColor: colors.accent }]}
+              <TouchableOpacity key={em}
+                style={[pg.emojiBtn, accountIcon===em && { backgroundColor: colors.accent+'33', borderColor: colors.accent }]}
                 onPress={() => persistIcon(em)}
               >
-                <Text style={{ fontSize: 26 }}>{em}</Text>
+                <Text style={{ fontSize:26 }}>{em}</Text>
               </TouchableOpacity>
             ))}
           </View>
         </View>
       </Modal>
 
-      {/* ── Biometric access sheet ── */}
+      {/* Biometric sheet */}
       <Modal visible={bioSheetVisible} transparent animationType="slide">
         <Pressable style={bs.backdrop} onPress={() => setBioSheetVisible(false)} />
-        <View style={[bio.sheet, { backgroundColor: colors.card }]}>
-          {/* Handle */}
-          <View style={[bio.handle, { backgroundColor: colors.subtext + '44' }]} />
-
-          <Text style={[bio.title, { color: colors.text }]}>
-            {bioType === 'face'        ? t('faceIdAccess')        :
-             bioType === 'fingerprint' ? t('fingerprintAccess')   :
-                                         t('biometricUnlock')}
+        <View style={[pg.bioSheet, { backgroundColor: colors.card }]}>
+          <View style={[pg.bioHandle, { backgroundColor: colors.subtext+'44' }]} />
+          <Text style={[pg.bioTitle, { color: colors.text }]}>
+            {bioType==='face' ? t('faceIdAccess') : bioType==='fingerprint' ? t('fingerprintAccess') : t('biometricUnlock')}
           </Text>
-          <Text style={[bio.subtitle, { color: colors.subtext }]}>
-            {t('biometricSub')}
-          </Text>
-
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={bio.list}>
+          <Text style={[pg.bioSub, { color: colors.subtext }]}>{t('biometricSub')}</Text>
+          <ScrollView style={{ flex:1 }} contentContainerStyle={pg.bioList}>
             {getAllUsers().map(u => {
               const isOn = bioUserMap[u.id] ?? false;
               return (
-                <View key={u.id} style={[bio.row, { backgroundColor: colors.background }]}>
-                  {/* Avatar */}
-                  <View style={[bio.avatar, {
-                    borderColor: roleColor(u.role, colors.accent),
-                    backgroundColor: colors.card,
-                  }]}>
-                    <Text style={[bio.avatarTxt, { color: roleColor(u.role, colors.accent) }]}>
-                      {u.username.charAt(0).toUpperCase()}
-                    </Text>
+                <View key={u.id} style={[pg.bioRow, { backgroundColor: colors.background }]}>
+                  <View style={[pg.bioAvatar, { borderColor: roleColor(u.role, colors.accent), backgroundColor: colors.card }]}>
+                    <Text style={[pg.bioAvatarTxt, { color: roleColor(u.role, colors.accent) }]}>{u.username.charAt(0).toUpperCase()}</Text>
                   </View>
-
-                  {/* Info */}
-                  <View style={{ flex: 1 }}>
-                    <Text style={[bio.rowName, { color: colors.text }]}>
-                      {u.username}{u.id === userId ? '  (you)' : ''}
-                    </Text>
-                    <Text style={[bio.rowRole, { color: roleColor(u.role, colors.accent) }]}>
-                      {roleLabel(u.role)}
-                    </Text>
+                  <View style={{ flex:1 }}>
+                    <Text style={[pg.bioName, { color: colors.text }]}>{u.username}{u.id===userId?'  (you)':''}</Text>
+                    <Text style={[pg.bioRole, { color: roleColor(u.role, colors.accent) }]}>{roleLabel(u.role)}</Text>
                   </View>
-
-                  {/* Toggle */}
-                  <Switch
-                    value={isOn}
-                    onValueChange={val => handleBioToggle(u, val)}
-                    trackColor={{ false: colors.subtext + '44', true: colors.accent }}
-                    thumbColor={isOn ? colors.background : colors.subtext}
-                  />
+                  <Switch value={isOn} onValueChange={val=>handleBioToggle(u,val)}
+                    trackColor={{ false: colors.subtext+'44', true: colors.accent }}
+                    thumbColor={isOn ? colors.background : colors.subtext} />
                 </View>
               );
             })}
           </ScrollView>
-
-          <View style={bio.footer}>
-            <TouchableOpacity
-              style={[bio.doneBtn, { backgroundColor: colors.accent }]}
-              onPress={() => setBioSheetVisible(false)}
-            >
-              <Text style={[bio.doneTxt, { color: colors.background }]}>{t('save')}</Text>
+          <View style={pg.bioDone}>
+            <TouchableOpacity style={[pg.bioDoneBtn, { backgroundColor: colors.accent }]} onPress={() => setBioSheetVisible(false)}>
+              <Text style={[pg.bioDoneTxt, { color: colors.background }]}>{t('save')}</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      {/* ── Biometric password confirmation ── */}
+      {/* Biometric password confirm */}
       <Modal visible={bioPwdTarget !== null} transparent animationType="fade">
         <Pressable style={bs.backdrop} onPress={() => { setBioPwdTarget(null); setBioPwdInput(''); }} />
         <View style={[bs.card, { backgroundColor: colors.card }]}>
           <Text style={[bs.title, { color: colors.text }]}>{t('confirmPassword')}</Text>
-          <Text style={{ color: colors.subtext, fontSize: 13 }}>
-            {t('confirmBioPrompt')}
-          </Text>
-          <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+          <Text style={{ color: colors.subtext, fontSize:13 }}>{t('confirmBioPrompt')}</Text>
+          <View style={{ flexDirection:'row', gap:8, alignItems:'center' }}>
             <TextInput
-              style={[bs.input, { flex: 1, color: colors.text, borderColor: colors.accent, backgroundColor: colors.background }]}
-              value={bioPwdInput}
-              onChangeText={setBioPwdInput}
-              placeholder="Account password"
-              placeholderTextColor={colors.subtext}
-              secureTextEntry={!bioPwdVisible}
-              autoFocus
-              autoCapitalize="none"
-              autoCorrect={false}
+              style={[bs.input, { flex:1, color: colors.text, borderColor: colors.accent, backgroundColor: colors.background }]}
+              value={bioPwdInput} onChangeText={setBioPwdInput}
+              placeholder={t('accountPassword')} placeholderTextColor={colors.subtext}
+              secureTextEntry={!bioPwdVisible} autoFocus autoCapitalize="none" autoCorrect={false}
               onSubmitEditing={confirmBioPwd}
             />
-            <TouchableOpacity
-              style={[bio.showBtn, { backgroundColor: colors.background }]}
-              onPress={() => setBioPwdVisible(v => !v)}
-            >
-              <Text style={{ color: colors.accent, fontSize: 13, fontWeight: '600' }}>
-                {bioPwdVisible ? 'Hide' : 'Show'}
-              </Text>
+            <TouchableOpacity style={[pg.showBtn, { backgroundColor: colors.background }]} onPress={() => setBioPwdVisible(v=>!v)}>
+              <Text style={{ color: colors.accent, fontSize:13, fontWeight:'600' }}>{bioPwdVisible ? t('hide') : t('show')}</Text>
             </TouchableOpacity>
           </View>
           <View style={bs.btnRow}>
-            <TouchableOpacity
-              style={[bs.btn, { borderColor: colors.subtext }]}
-              onPress={() => { setBioPwdTarget(null); setBioPwdInput(''); }}
-            >
-              <Text style={{ color: colors.subtext }}>Cancel</Text>
+            <TouchableOpacity style={[bs.btn, { borderColor: colors.subtext }]} onPress={() => { setBioPwdTarget(null); setBioPwdInput(''); }}>
+              <Text style={{ color: colors.subtext }}>{t('cancel')}</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[bs.btn, { backgroundColor: colors.accent, borderColor: colors.accent }]}
-              onPress={confirmBioPwd}
-            >
-              <Text style={{ color: colors.background, fontWeight: '700' }}>Enable</Text>
+            <TouchableOpacity style={[bs.btn, { backgroundColor: colors.accent, borderColor: colors.accent }]} onPress={confirmBioPwd}>
+              <Text style={{ color: colors.background, fontWeight:'700' }}>{t('enable')}</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      {/* ── Account edit drawer ── */}
+      {/* User edit drawer */}
       <Modal visible={accountDrawerOpen && accountDrawerUser !== null} transparent animationType="none">
         {accountDrawerUser && (
           <UserEditDrawer
-            user={accountDrawerUser}
-            currentUser={user}
-            colors={colors}
+            user={accountDrawerUser} currentUser={user} colors={colors}
             onClose={() => { setAccountDrawerOpen(false); setAccountDrawerUser(null); }}
             onSaved={reloadUsers}
           />
@@ -1114,81 +915,89 @@ function SettingsInner({ user }: { user: User }) {
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-const s = StyleSheet.create({
-  root:          { flex: 1 },
-  header:        { flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'android' ? 44 : 56, paddingHorizontal: 16, paddingBottom: 14, borderBottomWidth: 1, gap: 4 },
-  headerBtn:     { width: 40, height: 40, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
-  headerBtnTxt:  { fontSize: 18 },
-  headerTitle:   { flex: 1, textAlign: 'center', fontSize: 16, fontWeight: '700' },
-  scroll:        { padding: 20, paddingBottom: 60 },
-  card:          { borderRadius: 16, padding: 16, marginBottom: 10, gap: 10 },
-  cardLabel:     { fontSize: 11, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase' },
-  resetBtn:      { alignSelf: 'flex-start', borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 7 },
+// ─── Page styles ──────────────────────────────────────────────────────────────
+const pg = StyleSheet.create({
+  root:         { flex:1 },
+  header:       { flexDirection:'row', alignItems:'center', paddingTop: Platform.OS==='android' ? 44 : 56, paddingHorizontal:16, paddingBottom:14, borderBottomWidth:1, gap:4 },
+  backBtn:      { width:40, height:40, borderRadius:12, justifyContent:'center', alignItems:'center' },
+  backTxt:      { fontSize:18 },
+  headerTitle:  { flex:1, textAlign:'center', fontSize:16, fontWeight:'700' },
 
-  accountCard:   { flexDirection: 'row', alignItems: 'center', borderRadius: 18, padding: 18, marginBottom: 24, gap: 14 },
-  accountIconWrap:{ width: 58, height: 58, borderRadius: 29, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center' },
-  accountIconEmoji:{ fontSize: 28 },
-  accountName:   { fontSize: 18, fontWeight: '700' },
-  accountMeta:   { fontSize: 12, marginTop: 4 },
+  tabBar:       { flexDirection:'row', margin:12, borderRadius:16, padding:6, gap:2, borderWidth:1 },
+  tab:          { flex:1, alignItems:'center', paddingVertical:8, gap:3 },
+  tabIcon:      { fontSize:16 },
+  tabLabel:     { fontSize:9, letterSpacing:0.2, textAlign:'center' },
 
-  iconGrid:      { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center', paddingTop: 4 },
-  iconOption:    { width: 50, height: 50, borderRadius: 14, borderWidth: 1.5, borderColor: 'transparent', justifyContent: 'center', alignItems: 'center' },
+  scroll:       { padding:20, paddingBottom:60 },
+  card:         { borderRadius:16, padding:16, marginBottom:10, gap:12 },
 
-  presetGrid:   { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  presetChip:   { borderWidth: 2, borderRadius: 14, paddingVertical: 14, alignItems: 'center', gap: 6 },
-  presetDot:    { width: 24, height: 24, borderRadius: 12 },
-  presetName:   { fontSize: 11, fontWeight: '700' },
+  accountCard:  { flexDirection:'row', alignItems:'center', borderRadius:18, padding:16, marginBottom:20, gap:14 },
+  iconWrap:     { width:58, height:58, borderRadius:29, borderWidth:1.5, justifyContent:'center', alignItems:'center', overflow:'hidden' },
+  iconImg:      { width:58, height:58, borderRadius:29 },
+  iconEmoji:    { fontSize:28 },
+  accountName:  { fontSize:17, fontWeight:'700' },
+  accountMeta:  { fontSize:12, marginTop:3 },
 
-  slotsGrid:    { gap: 8 },
-  slotCard:     { flexDirection: 'row', alignItems: 'center', borderRadius: 12, borderWidth: 1, padding: 14, gap: 12 },
-  slotDot:      { width: 14, height: 14, borderRadius: 7, flexShrink: 0 },
-  slotName:     { fontSize: 13, fontWeight: '600' },
-  slotActive:   { fontSize: 10, fontWeight: '600', marginTop: 2 },
-  slotBtns:     { flexDirection: 'row', gap: 16, alignItems: 'center' },
-  slotAction:   { fontSize: 18 },
+  resetBtn:     { alignSelf:'flex-start', borderWidth:1, borderRadius:10, paddingHorizontal:14, paddingVertical:8 },
 
-  subSection:   { fontSize: 11, fontWeight: '700', marginBottom: 6, letterSpacing: 0.8, textTransform: 'uppercase' },
-  dataHint:     { fontSize: 12, lineHeight: 17, marginBottom: 10, fontStyle: 'italic' },
-  dataRow:      { flexDirection: 'row', gap: 10 },
-  dataBtn:      { flex: 1, borderRadius: 14, padding: 18, alignItems: 'center', gap: 7 },
-  dataBtnTxt:   { fontSize: 13, fontWeight: '600' },
+  oledBtn:      { flexDirection:'row', alignItems:'center', borderRadius:14, borderWidth:1, padding:14, marginBottom:10, gap:12 },
+  oledDot:      { width:36, height:36, borderRadius:10, borderWidth:1 },
+  oledLabel:    { fontSize:15, fontWeight:'700' },
+  oledSub:      { fontSize:12, marginTop:2 },
+  oledPreview:  { width:36, height:36, borderRadius:10, borderWidth:1, justifyContent:'flex-end', alignItems:'flex-start', padding:4 },
+  oledPreviewAccent: { width:16, height:3, borderRadius:2 },
 
-  userRow:      { flexDirection: 'row', alignItems: 'center', borderRadius: 14, padding: 14, marginBottom: 8, gap: 12 },
-  userAvatar:   { width: 44, height: 44, borderRadius: 14, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center' },
-  userAvatarTxt:{ fontSize: 17, fontWeight: '700' },
-  userName:     { fontSize: 15, fontWeight: '600' },
-  userRole:     { fontSize: 11, fontWeight: '500', marginTop: 2 },
-  youBadge:     { fontSize: 10, fontWeight: '800', borderWidth: 1, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 },
+  presetRow:    { paddingLeft:0, paddingRight:4, paddingBottom:14, gap:8 },
+  presetChip:   { borderWidth:1.5, borderRadius:14, paddingVertical:14, alignItems:'center', gap:6 },
+  presetDot:    { width:22, height:22, borderRadius:8 },
+  presetName:   { fontSize:11, fontWeight:'700' },
 
-  langRow:      { flexDirection: 'row', gap: 8 },
-  langBtn:      { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10 },
-  langBtnTxt:   { fontSize: 13, fontWeight: '800', letterSpacing: 0.5 },
+  slotRow:      { flexDirection:'row', alignItems:'center', borderRadius:12, borderWidth:1, padding:14, marginBottom:8, gap:12 },
+  slotDot:      { width:14, height:14, borderRadius:5, flexShrink:0 },
+  slotName:     { fontSize:13, fontWeight:'600' },
+  slotActive:   { fontSize:10, fontWeight:'600', marginTop:2 },
 
-  galleryBtn:   { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, marginBottom: 12 },
-  galleryBtnIcon:{ fontSize: 20 },
-  galleryBtnTxt: { fontSize: 14, fontWeight: '600' },
+  langRow:      { flexDirection:'row', gap:8 },
+  langBtn:      { borderRadius:10, paddingHorizontal:14, paddingVertical:9 },
+  langBtnTxt:   { fontSize:12, fontWeight:'800' },
 
-  accountIconImage: { width: 56, height: 56, borderRadius: 28 },
-});
+  hint:         { fontSize:12, lineHeight:17, marginBottom:10, fontStyle:'italic' },
+  dataRow:      { flexDirection:'row', gap:10, marginBottom:20 },
+  dataBtn:      { flex:1, borderRadius:14, padding:18, alignItems:'center', gap:7 },
+  dataBtnTxt:   { fontSize:13, fontWeight:'600' },
 
-// ─── Biometric sheet styles ────────────────────────────────────────────────────
-const bio = StyleSheet.create({
-  iconWrap:   { width: 36, height: 36, justifyContent: 'center', alignItems: 'center' },
-  iconTxt:    { fontSize: 22 },
-  sheet:      { position: 'absolute', bottom: 0, left: 0, right: 0, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '80%', paddingBottom: 32 },
-  handle:     { width: 36, height: 3, borderRadius: 2, alignSelf: 'center', marginTop: 12, marginBottom: 16 },
-  title:      { fontSize: 18, fontWeight: '700', paddingHorizontal: 24, marginBottom: 6 },
-  subtitle:   { fontSize: 13, lineHeight: 19, paddingHorizontal: 24, marginBottom: 16 },
-  list:       { paddingHorizontal: 16, gap: 8, paddingBottom: 8 },
-  row:        { flexDirection: 'row', alignItems: 'center', borderRadius: 12, padding: 14, gap: 12 },
-  avatar:     { width: 40, height: 40, borderRadius: 20, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center' },
-  avatarTxt:  { fontSize: 16, fontWeight: '700' },
-  rowName:    { fontSize: 15, fontWeight: '600' },
-  rowRole:    { fontSize: 11, fontWeight: '500', marginTop: 1 },
-  rowHint:    { fontSize: 11, marginTop: 2, fontStyle: 'italic' },
-  footer:     { paddingHorizontal: 20, paddingTop: 14 },
-  doneBtn:    { borderRadius: 12, paddingVertical: 15, alignItems: 'center' },
-  doneTxt:    { fontSize: 15, fontWeight: '700' },
-  showBtn:    { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12 },
+  userRow:      { flexDirection:'row', alignItems:'center', borderRadius:14, padding:14, marginBottom:8, gap:12 },
+  userAvatar:   { width:44, height:44, borderRadius:14, borderWidth:1.5, justifyContent:'center', alignItems:'center' },
+  userAvatarTxt:{ fontSize:17, fontWeight:'700' },
+  userName:     { fontSize:15, fontWeight:'600' },
+  userRole:     { fontSize:11, fontWeight:'500', marginTop:2 },
+
+  feedbackCard: { flexDirection:'row', alignItems:'center', borderRadius:14, borderWidth:1, padding:16, marginBottom:10, gap:12 },
+  feedbackIcon: { fontSize:24 },
+  feedbackLabel:{ fontSize:15, fontWeight:'600' },
+  feedbackSub:  { fontSize:12, marginTop:3 },
+  aboutRow:     { flexDirection:'row', justifyContent:'space-between', alignItems:'center', paddingVertical:12, paddingHorizontal:4 },
+  aboutKey:     { fontSize:13 },
+  aboutVal:     { fontSize:13, fontWeight:'600' },
+
+  galleryBtn:   { flexDirection:'row', alignItems:'center', gap:10, borderWidth:1, borderRadius:12, padding:14 },
+  galleryTxt:   { fontSize:14, fontWeight:'600' },
+  emojiGrid:    { flexDirection:'row', flexWrap:'wrap', gap:8, justifyContent:'center', paddingTop:4 },
+  emojiBtn:     { width:48, height:48, borderRadius:12, borderWidth:1.5, borderColor:'transparent', justifyContent:'center', alignItems:'center' },
+
+  bioSheet:     { position:'absolute', bottom:0, left:0, right:0, borderTopLeftRadius:24, borderTopRightRadius:24, maxHeight:'80%', paddingBottom:32 },
+  bioHandle:    { width:36, height:3, borderRadius:2, alignSelf:'center', marginTop:12, marginBottom:16 },
+  bioTitle:     { fontSize:18, fontWeight:'700', paddingHorizontal:24, marginBottom:6 },
+  bioSub:       { fontSize:13, lineHeight:19, paddingHorizontal:24, marginBottom:16, color:'#888' },
+  bioList:      { paddingHorizontal:16, gap:8, paddingBottom:8 },
+  bioRow:       { flexDirection:'row', alignItems:'center', borderRadius:12, padding:14, gap:12 },
+  bioAvatar:    { width:40, height:40, borderRadius:14, borderWidth:1.5, justifyContent:'center', alignItems:'center' },
+  bioAvatarTxt: { fontSize:16, fontWeight:'700' },
+  bioName:      { fontSize:15, fontWeight:'600' },
+  bioRole:      { fontSize:11, fontWeight:'500', marginTop:1 },
+  bioDone:      { paddingHorizontal:20, paddingTop:14 },
+  bioDoneBtn:   { borderRadius:12, paddingVertical:15, alignItems:'center' },
+  bioDoneTxt:   { fontSize:15, fontWeight:'700' },
+
+  showBtn:      { borderRadius:10, paddingHorizontal:12, paddingVertical:12 },
 });
